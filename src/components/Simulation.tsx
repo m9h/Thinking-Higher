@@ -357,7 +357,7 @@ export default function Simulation() {
       {/* Top Bar */}
       <div className="topbar">
         <div className="logo">
-          Think<span>With</span>
+          Think<span>Higher</span>
         </div>
         <div className="scenario-title">
           Scenario 001 — &quot;I Thought It Worked&quot;
