@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect } from "react";
-import { STAGES } from "@/lib/scenarios";
+import { STAGES, SCENARIO } from "@/lib/scenarios";
 import { callLLM } from "@/lib/llm";
-import { Assessment, FeedbackScores } from "@/lib/types";
+import { Assessment, FeedbackScores, TranscriptEntry } from "@/lib/types";
 import Sidebar from "./Sidebar";
 import MessageBubble from "./MessageBubble";
 import TypingIndicator from "./TypingIndicator";
@@ -16,6 +16,34 @@ interface DisplayMessage {
   text: string;
   color: string;
   avatar: string;
+}
+
+// --- Persistence helpers (fire-and-forget to API) ---
+
+async function apiCreateSession(scenarioId: string): Promise<{ id: string; participantId: string }> {
+  const res = await fetch("/api/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "createSession", scenarioId }),
+  });
+  const data = await res.json();
+  return data.session;
+}
+
+async function apiSaveTranscript(sessionId: string, stageId: string, entries: TranscriptEntry[]) {
+  await fetch("/api/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "saveTranscript", sessionId, stageId, entries }),
+  });
+}
+
+async function apiSaveAssessment(sessionId: string, scores: FeedbackScores, responseTimesMs: number[]) {
+  await fetch("/api/sessions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "saveAssessment", sessionId, scores, responseTimesMs }),
+  });
 }
 
 export default function Simulation() {
@@ -43,6 +71,10 @@ export default function Simulation() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const msgIdCounter = useRef(0);
+
+  // Persistence refs
+  const sessionIdRef = useRef<string | null>(null);
+  const stageTranscriptRef = useRef<TranscriptEntry[]>([]);
 
   const nextMsgId = () => `msg-${++msgIdCounter.current}`;
 
@@ -89,6 +121,7 @@ export default function Simulation() {
           ],
         });
 
+        const now = Date.now();
         setIsTyping(false);
         setMessages((prev) => [
           ...prev,
@@ -102,6 +135,14 @@ export default function Simulation() {
           },
         ]);
         setConversationHistory([{ role: "assistant", content: text }]);
+
+        // Record opener in transcript
+        stageTranscriptRef.current.push({
+          role: "assistant",
+          content: text,
+          timestamp: now,
+          responseTimeMs: null,
+        });
       } catch {
         setIsTyping(false);
         const fallbacks = [
@@ -110,6 +151,7 @@ export default function Simulation() {
           "Hey! Alex mentioned you had an update on the onboarding feature?",
         ];
         const text = fallbacks[stageIndex];
+        const now = Date.now();
         setMessages((prev) => [
           ...prev,
           {
@@ -122,6 +164,13 @@ export default function Simulation() {
           },
         ]);
         setConversationHistory([{ role: "assistant", content: text }]);
+
+        stageTranscriptRef.current.push({
+          role: "assistant",
+          content: text,
+          timestamp: now,
+          responseTimeMs: null,
+        });
       }
 
       setIsLoading(false);
@@ -137,6 +186,7 @@ export default function Simulation() {
       setReadOnly(false);
       setMessages([]);
       setConversationHistory([]);
+      stageTranscriptRef.current = [];
 
       addSystemMessage(
         `Starting conversation with ${STAGES[stageIndex].name} (${STAGES[stageIndex].role})`
@@ -146,8 +196,18 @@ export default function Simulation() {
     [addSystemMessage, getAIOpener]
   );
 
-  const startSimulation = useCallback(() => {
+  const startSimulation = useCallback(async () => {
     setStarted(true);
+
+    // Create session in persistence layer
+    try {
+      const session = await apiCreateSession(SCENARIO.id);
+      sessionIdRef.current = session.id;
+    } catch {
+      // Persistence failure shouldn't block the simulation
+      console.warn("Failed to create session — continuing without persistence");
+    }
+
     loadStage(0);
   }, [loadStage]);
 
@@ -173,6 +233,14 @@ export default function Simulation() {
       },
     ]);
 
+    // Record user message in transcript
+    stageTranscriptRef.current.push({
+      role: "user",
+      content: text,
+      timestamp: sendTimestamp,
+      responseTimeMs: null,
+    });
+
     const newHistory = [...conversationHistory, { role: "user", content: text }];
     setConversationHistory(newHistory);
 
@@ -180,9 +248,10 @@ export default function Simulation() {
     setIsTyping(true);
 
     const recentHistory = newHistory.slice(-6);
+    const stageDefinition = SCENARIO.stages[currentStage];
 
     try {
-      const isLastExchange = newCount >= 3;
+      const isLastExchange = newCount >= stageDefinition.turnConfig.wrapUpSignalTurn;
       const systemPrompt =
         stage.systemPrompt +
         (isLastExchange
@@ -216,7 +285,15 @@ export default function Simulation() {
         responseTimeMs,
       });
 
-      if (newCount >= 1) setShowNextBar(true);
+      // Record AI reply in transcript
+      stageTranscriptRef.current.push({
+        role: "assistant",
+        content: reply,
+        timestamp: Date.now(),
+        responseTimeMs,
+      });
+
+      if (newCount >= stageDefinition.turnConfig.minTurns) setShowNextBar(true);
     } catch {
       setIsTyping(false);
       setMessages((prev) => [
@@ -230,7 +307,7 @@ export default function Simulation() {
           avatar: stage.avatar,
         },
       ]);
-      if (newCount >= 1) setShowNextBar(true);
+      if (newCount >= stageDefinition.turnConfig.minTurns) setShowNextBar(true);
     }
 
     setIsLoading(false);
@@ -246,7 +323,7 @@ export default function Simulation() {
 
     try {
       const raw = await callLLM({
-        system: `You are an expert evaluator of higher-order thinking and communication skills, based on Bloom's Taxonomy. Evaluate a student's performance across a workplace simulation. Return ONLY a JSON object with this exact structure: {"analytical": 72, "communication": 68, "ownership": 80, "adaptability": 65, "feedback": "2-3 sentence overall feedback focusing on what was strong and one key area to improve"}. Scores are out of 100. Be honest and constructive.`,
+        system: SCENARIO.assessmentConfig.evaluatorPrompt,
         messages: [
           {
             role: "user",
@@ -257,21 +334,40 @@ export default function Simulation() {
       const clean = raw.replace(/```json|```/g, "").trim();
       const scores: FeedbackScores = JSON.parse(clean);
       setFeedbackScores(scores);
+
+      // Persist assessment
+      if (sessionIdRef.current) {
+        const rts = allAssessmentsRef.current.map((a) => a.responseTimeMs);
+        apiSaveAssessment(sessionIdRef.current, scores, rts).catch(() => {});
+      }
     } catch {
-      setFeedbackScores({
+      const fallbackScores: FeedbackScores = {
         analytical: 72,
         communication: 68,
         ownership: 75,
         adaptability: 70,
         feedback:
           "You navigated three distinct stakeholder conversations under pressure. Your ability to adapt your communication style across technical and non-technical audiences is a strong foundation to build on.",
-      });
+      };
+      setFeedbackScores(fallbackScores);
+
+      if (sessionIdRef.current) {
+        const rts = allAssessmentsRef.current.map((a) => a.responseTimeMs);
+        apiSaveAssessment(sessionIdRef.current, fallbackScores, rts).catch(() => {});
+      }
     }
   }, []);
 
   const advanceStage = useCallback(() => {
     savedMessagesRef.current[currentStage] = messages;
     savedHistoryRef.current[currentStage] = conversationHistory;
+
+    // Persist stage transcript
+    if (sessionIdRef.current) {
+      const stageId = STAGES[currentStage].id;
+      apiSaveTranscript(sessionIdRef.current, stageId, stageTranscriptRef.current).catch(() => {});
+    }
+
     if (currentStage < 2) {
       loadStage(currentStage + 1);
     } else {
@@ -318,17 +414,14 @@ export default function Simulation() {
     return (
       <div className="start-screen" id="startScreen">
         <div className="start-card">
-          <div className="start-tag">Junior SDE · Simulation #001</div>
+          <div className="start-tag">Junior SDE · Simulation #{SCENARIO.id}</div>
           <h1 className="start-title">
             From requirements
             <br />
             to a <em>real problem.</em>
           </h1>
           <p className="start-desc">
-            You&apos;re a junior SDE starting a new feature. Walk through three
-            realistic workplace conversations — gathering requirements, flagging
-            a bug you found mid-build, and managing a timeline change with your
-            project manager.
+            {SCENARIO.description}
           </p>
           <div className="start-stages">
             {STAGES.map((s) => (
@@ -360,7 +453,7 @@ export default function Simulation() {
           Think<span>Higher</span>
         </div>
         <div className="scenario-title">
-          Scenario 001 — &quot;I Thought It Worked&quot;
+          Scenario {SCENARIO.id} — &quot;{SCENARIO.title}&quot;
         </div>
         <div className="stage-indicators">
           {STAGES.map((_, i) => {
@@ -442,7 +535,7 @@ export default function Simulation() {
                     <em>Read-only review mode.</em> Click any name in the
                     sidebar to switch stages.
                   </span>
-                ) : stageMessageCount >= 3 ? (
+                ) : stageMessageCount >= SCENARIO.stages[currentStage].turnConfig.wrapUpSignalTurn ? (
                   <span>
                     <em>Conversation is wrapping up.</em> Continue or move to the
                     next stage when ready.

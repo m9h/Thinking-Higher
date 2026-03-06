@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "ThinkWith — Cognitive Simulation Platform",
+  title: "ThinkHigher — Cognitive Simulation Platform",
   description:
     "AI-driven workplace simulations for practicing higher-order thinking and communication skills.",
 };
