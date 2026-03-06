@@ -17,12 +17,19 @@ export async function POST(req: NextRequest) {
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 
-  const contents = messages.map(
+  const mapped = messages.map(
     (m: { role: string; content: string }) => ({
       role: m.role === "assistant" ? "model" : "user",
       parts: [{ text: m.content }],
     })
   );
+
+  // Gemini requires conversations to start with "user" role.
+  // If history starts with "model" (AI opener), prepend a synthetic user turn.
+  const contents =
+    mapped.length > 0 && mapped[0].role === "model"
+      ? [{ role: "user" as const, parts: [{ text: "[Continue the conversation.]" }] }, ...mapped]
+      : mapped;
 
   try {
     const geminiRes = await fetch(url, {
