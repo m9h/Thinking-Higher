@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { system, messages, maxTokens = 1000 } = await req.json();
+  const { system, messages, maxTokens = 2000 } = await req.json();
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
 
@@ -38,25 +38,35 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: system }] },
         contents,
-        generationConfig: { maxOutputTokens: maxTokens },
+        generationConfig: {
+          maxOutputTokens: maxTokens,
+          // Gemini 2.5 Flash uses "thinking" tokens from the output budget.
+          // Set a separate thinking budget so output tokens aren't starved.
+          thinkingConfig: { thinkingBudget: 1024 },
+        },
       }),
     });
 
     const data = await geminiRes.json();
 
     if (!geminiRes.ok) {
-      console.error("Gemini error:", data);
+      console.error("Gemini error:", JSON.stringify(data));
       return NextResponse.json(
         { error: data.error?.message || "Gemini API error" },
         { status: geminiRes.status }
       );
     }
 
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    // Extract text from response, handling cases where thinking tokens
+    // consumed the entire budget leaving no output parts.
+    const candidate = data.candidates?.[0];
+    const text = candidate?.content?.parts?.[0]?.text;
+
     if (!text) {
+      console.error("Gemini returned no text:", JSON.stringify(data));
       return NextResponse.json(
-        { error: "Gemini returned no text", raw: data },
-        { status: 500 }
+        { error: "Gemini returned no text" },
+        { status: 502 }
       );
     }
 
