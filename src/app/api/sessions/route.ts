@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import type { Session, FeedbackScores } from "@/lib/types";
+import type { Session, FeedbackScores, SurveyResponse, ProfileData, TaskResult } from "@/lib/types";
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -11,14 +11,15 @@ export async function POST(req: NextRequest) {
   const { action } = body;
 
   if (action === "createSession") {
-    const { participantId, scenarioId } = body;
+    const { participantId, scenarioId, metadata } = body;
     const session: Session = {
       id: generateId(),
-      participantId: participantId || generateId(),
+      participantId: participantId || metadata?.participantId || generateId(),
       scenarioId,
       startedAt: Date.now(),
       completedAt: null,
       status: "active",
+      metadata: metadata || null,
     };
     await db.saveSession(session);
     return NextResponse.json({ session });
@@ -42,6 +43,37 @@ export async function POST(req: NextRequest) {
       completedAt: Date.now(),
     });
     return NextResponse.json({ ok: true });
+  }
+
+  if (action === "saveSurvey") {
+    const { sessionId, stageId, responses } = body as {
+      sessionId: string;
+      stageId: string;
+      responses: SurveyResponse[];
+    };
+    await db.saveSurvey(sessionId, stageId, responses);
+    return NextResponse.json({ ok: true });
+  }
+
+  if (action === "saveParticipantProfile") {
+    const { sessionId, profile } = body as {
+      sessionId: string;
+      profile: ProfileData;
+    };
+    await db.saveParticipantProfile(sessionId, profile);
+    return NextResponse.json({ ok: true });
+  }
+
+  if (action === "saveTaskResult") {
+    const { result } = body as { result: TaskResult };
+    await db.saveTaskResult(result);
+    return NextResponse.json({ ok: true });
+  }
+
+  if (action === "getTaskResult") {
+    const { sessionId, stageId } = body;
+    const result = await db.getTaskResult(sessionId, stageId);
+    return NextResponse.json({ result });
   }
 
   return NextResponse.json({ error: "Unknown action" }, { status: 400 });

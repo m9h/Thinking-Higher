@@ -1,4 +1,4 @@
-import { Session, StageTranscript, SessionAssessment, TranscriptEntry, FeedbackScores } from "./types";
+import { Session, StageTranscript, SessionAssessment, TranscriptEntry, FeedbackScores, SurveyResponse, ProfileData, TaskResult } from "./types";
 
 // --- Database Interface ---
 // Implementations can swap between local JSON storage and Vercel Postgres.
@@ -11,6 +11,14 @@ export interface DB {
   getTranscript(sessionId: string, stageId: string): Promise<StageTranscript | null>;
   saveAssessment(sessionId: string, scores: FeedbackScores, responseTimesMs: number[]): Promise<void>;
   getAssessment(sessionId: string): Promise<SessionAssessment | null>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  saveProfile(sessionId: string, profile: any): Promise<void>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  getProfile(sessionId: string): Promise<any | null>;
+  saveSurvey(sessionId: string, stageId: string, responses: SurveyResponse[]): Promise<void>;
+  saveParticipantProfile(sessionId: string, profile: ProfileData): Promise<void>;
+  saveTaskResult(result: TaskResult): Promise<void>;
+  getTaskResult(sessionId: string, stageId: string): Promise<TaskResult | null>;
 }
 
 // --- In-Memory Store (server-side, per-process) ---
@@ -19,6 +27,11 @@ export interface DB {
 const sessions = new Map<string, Session>();
 const transcripts = new Map<string, StageTranscript>();
 const assessments = new Map<string, SessionAssessment>();
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const profiles = new Map<string, any>();
+const surveys = new Map<string, SurveyResponse[]>();
+const participantProfiles = new Map<string, ProfileData>();
+const taskResults = new Map<string, TaskResult>();
 
 function transcriptKey(sessionId: string, stageId: string) {
   return `${sessionId}:${stageId}`;
@@ -63,5 +76,29 @@ export const db: DB = {
 
   async getAssessment(sessionId) {
     return assessments.get(sessionId) ?? null;
+  },
+
+  async saveProfile(sessionId, profile) {
+    profiles.set(sessionId, profile);
+  },
+
+  async getProfile(sessionId) {
+    return profiles.get(sessionId) ?? null;
+  },
+
+  async saveSurvey(sessionId, stageId, responses) {
+    surveys.set(`${sessionId}:${stageId}`, [...responses]);
+  },
+
+  async saveParticipantProfile(sessionId, profile) {
+    participantProfiles.set(sessionId, { ...profile });
+  },
+
+  async saveTaskResult(result) {
+    taskResults.set(transcriptKey(result.sessionId, result.stageId), { ...result });
+  },
+
+  async getTaskResult(sessionId, stageId) {
+    return taskResults.get(transcriptKey(sessionId, stageId)) ?? null;
   },
 };
