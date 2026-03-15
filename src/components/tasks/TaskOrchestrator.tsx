@@ -2,7 +2,15 @@
 
 import { useState, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
-import type { TaskSummary, BanditTrialData, ARCTrialData } from "@/lib/types";
+import type {
+  TaskSummary,
+  BanditTrialData,
+  ARCTrialData,
+  ReversalTrialData,
+  TwoStepTrialData,
+  HanabiTrialData,
+  ChatTrialData,
+} from "@/lib/types";
 import TaskInstructions from "./TaskInstructions";
 import TaskDebrief from "./TaskDebrief";
 
@@ -25,15 +33,6 @@ interface RWFit {
   qValuesOverTime: [number, number][];
 }
 
-const TwoArmedBandit = dynamic(
-  () => import("@/components/tasks/TwoArmedBandit"),
-  { loading: () => <LoadingState message="Loading bandit task..." /> }
-);
-
-const ARCTask = dynamic(() => import("@/components/tasks/ARCTask"), {
-  loading: () => <LoadingState message="Loading puzzle task..." />,
-});
-
 function LoadingState({ message }: { message: string }) {
   return (
     <div className="task-container">
@@ -44,6 +43,35 @@ function LoadingState({ message }: { message: string }) {
     </div>
   );
 }
+
+const TwoArmedBandit = dynamic(
+  () => import("@/components/tasks/TwoArmedBandit"),
+  { loading: () => <LoadingState message="Loading bandit task..." /> }
+);
+
+const ARCTask = dynamic(() => import("@/components/tasks/ARCTask"), {
+  loading: () => <LoadingState message="Loading puzzle task..." />,
+});
+
+const ReversalLearning = dynamic(
+  () => import("@/components/tasks/ReversalLearning"),
+  { loading: () => <LoadingState message="Loading reversal task..." /> }
+);
+
+const TwoStepTask = dynamic(
+  () => import("@/components/tasks/TwoStepTask"),
+  { loading: () => <LoadingState message="Loading two-step task..." /> }
+);
+
+const HanabiGame = dynamic(
+  () => import("@/components/tasks/HanabiGame"),
+  { loading: () => <LoadingState message="Loading Hanabi..." /> }
+);
+
+const ChatTask = dynamic(
+  () => import("@/components/tasks/ChatTask"),
+  { loading: () => <LoadingState message="Loading simulation..." /> }
+);
 
 interface TaskOrchestratorProps {
   config: CognitiveTaskConfig;
@@ -64,12 +92,35 @@ export default function TaskOrchestrator({ config }: TaskOrchestratorProps) {
     setPhase("task");
   }, []);
 
+  const persistResult = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (taskTrials: any[], taskSummary: TaskSummary) => {
+      fetch("/api/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "saveTaskResult",
+          result: {
+            sessionId: "anonymous",
+            stageId: config.taskId,
+            taskType: config.taskType,
+            trials: taskTrials,
+            startedAt: taskStartRef.current,
+            completedAt: Date.now(),
+            summary: taskSummary,
+          },
+        }),
+      }).catch(() => {});
+    },
+    [config.taskId, config.taskType]
+  );
+
   const handleBanditComplete = useCallback(
     async (banditTrials: BanditTrialData[], taskSummary: TaskSummary) => {
       setTrials(banditTrials);
       setSummary(taskSummary);
+      persistResult(banditTrials, taskSummary);
 
-      // Run Rescorla-Wagner fitting
       if (banditTrials.length > 0) {
         try {
           const { fitRW } = await import("@/lib/models/rescorla-wagner");
@@ -80,55 +131,59 @@ export default function TaskOrchestrator({ config }: TaskOrchestratorProps) {
         }
       }
 
-      // Persist results (fire-and-forget)
-      fetch("/api/sessions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "saveTaskResult",
-          result: {
-            sessionId: "anonymous",
-            stageId: config.taskId,
-            taskType: config.taskType,
-            trials: banditTrials,
-            startedAt: taskStartRef.current,
-            completedAt: Date.now(),
-            summary: taskSummary,
-          },
-        }),
-      }).catch(() => {});
-
       setPhase("debrief");
     },
-    [config.taskId, config.taskType]
+    [persistResult]
   );
 
   const handleARCComplete = useCallback(
     (arcTrials: ARCTrialData[], taskSummary: TaskSummary) => {
       setTrials(arcTrials);
       setSummary(taskSummary);
-
-      // Persist results (fire-and-forget)
-      fetch("/api/sessions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "saveTaskResult",
-          result: {
-            sessionId: "anonymous",
-            stageId: config.taskId,
-            taskType: config.taskType,
-            trials: arcTrials,
-            startedAt: taskStartRef.current,
-            completedAt: Date.now(),
-            summary: taskSummary,
-          },
-        }),
-      }).catch(() => {});
-
+      persistResult(arcTrials, taskSummary);
       setPhase("debrief");
     },
-    [config.taskId, config.taskType]
+    [persistResult]
+  );
+
+  const handleReversalComplete = useCallback(
+    (reversalTrials: ReversalTrialData[], taskSummary: TaskSummary) => {
+      setTrials(reversalTrials);
+      setSummary(taskSummary);
+      persistResult(reversalTrials, taskSummary);
+      setPhase("debrief");
+    },
+    [persistResult]
+  );
+
+  const handleTwoStepComplete = useCallback(
+    (twoStepTrials: TwoStepTrialData[], taskSummary: TaskSummary) => {
+      setTrials(twoStepTrials);
+      setSummary(taskSummary);
+      persistResult(twoStepTrials, taskSummary);
+      setPhase("debrief");
+    },
+    [persistResult]
+  );
+
+  const handleHanabiComplete = useCallback(
+    (hanabiTrials: HanabiTrialData[], taskSummary: TaskSummary) => {
+      setTrials(hanabiTrials);
+      setSummary(taskSummary);
+      persistResult(hanabiTrials, taskSummary);
+      setPhase("debrief");
+    },
+    [persistResult]
+  );
+
+  const handleChatComplete = useCallback(
+    (chatTrials: ChatTrialData[], taskSummary: TaskSummary) => {
+      setTrials(chatTrials);
+      setSummary(taskSummary);
+      persistResult(chatTrials, taskSummary);
+      setPhase("debrief");
+    },
+    [persistResult]
   );
 
   const handleContinue = useCallback(() => {
@@ -160,6 +215,25 @@ export default function TaskOrchestrator({ config }: TaskOrchestratorProps) {
         );
       case "arc-grid":
         return <ARCTaskWrapper onComplete={handleARCComplete} />;
+      case "reversal-learning":
+        return (
+          <ReversalLearning
+            numTrials={config.numTrials}
+            reversalTrial={config.parameters.reversalTrial ?? 60}
+            onComplete={handleReversalComplete}
+          />
+        );
+      case "two-step":
+        return (
+          <TwoStepTask
+            numTrials={config.numTrials}
+            onComplete={handleTwoStepComplete}
+          />
+        );
+      case "hanabi":
+        return <HanabiGame onComplete={handleHanabiComplete} />;
+      case "chat-simulation":
+        return <ChatTask onComplete={handleChatComplete} />;
       default:
         return (
           <div className="task-container">
@@ -181,7 +255,6 @@ export default function TaskOrchestrator({ config }: TaskOrchestratorProps) {
     }
   }
 
-  // Debrief phase
   if (!summary) return null;
 
   return (
@@ -197,7 +270,6 @@ export default function TaskOrchestrator({ config }: TaskOrchestratorProps) {
   );
 }
 
-// Wrapper that loads puzzles and renders ARCTask
 function ARCTaskWrapper({
   onComplete,
 }: {

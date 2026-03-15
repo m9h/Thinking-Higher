@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { STAGES, SCENARIO } from "@/lib/scenarios";
 import { callLLM } from "@/lib/llm";
-import { Assessment, FeedbackScores, TranscriptEntry } from "@/lib/types";
+import { Assessment, FeedbackScores, TranscriptEntry, ChatTrialData, TaskSummary } from "@/lib/types";
 import Sidebar from "./Sidebar";
 import MessageBubble from "./MessageBubble";
 import TypingIndicator from "./TypingIndicator";
@@ -46,7 +46,11 @@ async function apiSaveAssessment(sessionId: string, scores: FeedbackScores, resp
   });
 }
 
-export default function Simulation() {
+interface SimulationProps {
+  onComplete?: (trials: ChatTrialData[], summary: TaskSummary) => void;
+}
+
+export default function Simulation({ onComplete }: SimulationProps = {}) {
   const [started, setStarted] = useState(false);
   const [currentStage, setCurrentStage] = useState(0);
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
@@ -75,6 +79,8 @@ export default function Simulation() {
   // Persistence refs
   const sessionIdRef = useRef<string | null>(null);
   const stageTranscriptRef = useRef<TranscriptEntry[]>([]);
+  const simulationStartRef = useRef<number>(0);
+  const stageStartRef = useRef<number>(0);
 
   const nextMsgId = () => `msg-${++msgIdCounter.current}`;
 
@@ -198,6 +204,7 @@ export default function Simulation() {
 
   const startSimulation = useCallback(async () => {
     setStarted(true);
+    simulationStartRef.current = Date.now();
 
     // Create session in persistence layer
     try {
@@ -313,6 +320,29 @@ export default function Simulation() {
     setIsLoading(false);
   }, [inputValue, isLoading, currentStage, stageMessageCount, conversationHistory]);
 
+  const notifyComplete = useCallback((scores: FeedbackScores) => {
+    if (!onComplete) return;
+    const now = Date.now();
+    const trials: ChatTrialData[] = STAGES.map((s, i) => ({
+      trialIndex: i,
+      startedAt: simulationStartRef.current,
+      respondedAt: now,
+      rt: now - simulationStartRef.current,
+      stimulusOnsetAt: simulationStartRef.current,
+      taskType: "chat-simulation" as const,
+      stageId: s.id,
+      stageName: s.name,
+      messageCount: allAssessmentsRef.current.filter(a => a.stage === s.name).length,
+      assessmentScores: i === STAGES.length - 1 ? scores : undefined,
+    }));
+    const summary: TaskSummary = {
+      totalTrials: STAGES.length,
+      completedTrials: STAGES.length,
+      meanRT: (now - simulationStartRef.current) / STAGES.length,
+    };
+    onComplete(trials, summary);
+  }, [onComplete]);
+
   const generateFeedback = useCallback(async () => {
     setSimulationComplete(true);
     setShowFeedback(true);
@@ -334,6 +364,7 @@ export default function Simulation() {
       const clean = raw.replace(/```json|```/g, "").trim();
       const scores: FeedbackScores = JSON.parse(clean);
       setFeedbackScores(scores);
+      notifyComplete(scores);
 
       // Persist assessment
       if (sessionIdRef.current) {
@@ -350,13 +381,14 @@ export default function Simulation() {
           "You navigated three distinct stakeholder conversations under pressure. Your ability to adapt your communication style across technical and non-technical audiences is a strong foundation to build on.",
       };
       setFeedbackScores(fallbackScores);
+      notifyComplete(fallbackScores);
 
       if (sessionIdRef.current) {
         const rts = allAssessmentsRef.current.map((a) => a.responseTimeMs);
         apiSaveAssessment(sessionIdRef.current, fallbackScores, rts).catch(() => {});
       }
     }
-  }, []);
+  }, [notifyComplete]);
 
   const advanceStage = useCallback(() => {
     savedMessagesRef.current[currentStage] = messages;

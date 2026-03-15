@@ -20,6 +20,33 @@ const TASK_CATALOG = [
     icon: "\u{1F9E9}",
   },
   {
+    id: "reversal-learning",
+    title: "Reversal Learning",
+    description:
+      "Can you adapt when the rules change? A 3-arm bandit where the best option flips halfway through.",
+    duration: "8-12 min",
+    category: "Cognitive Flexibility",
+    icon: "\u{1F504}",
+  },
+  {
+    id: "two-step",
+    title: "Two-Step Task",
+    description:
+      "Are you a creature of habit or a strategic planner? Two-stage choices reveal your decision style.",
+    duration: "15-20 min",
+    category: "Decision Strategy",
+    icon: "\u{1F680}",
+  },
+  {
+    id: "hanabi",
+    title: "Hanabi",
+    description:
+      "Cooperative card game with an AI partner. Can you communicate and coordinate when you can't see your own hand?",
+    duration: "10-15 min",
+    category: "Theory of Mind",
+    icon: "\u{1F386}",
+  },
+  {
     id: "chat-simulation",
     title: "Workplace Simulation",
     description:
@@ -70,8 +97,7 @@ export default function TaskCatalogPage() {
 
       <div className="catalog-grid">
         {TASK_CATALOG.map((task) => {
-          const href =
-            task.id === "chat-simulation" ? "/simulation" : `/tasks/${task.id}`;
+          const href = `/tasks/${task.id}`;
           return (
             <Link key={task.id} href={href} className="catalog-card">
               <div className="catalog-icon">{task.icon}</div>

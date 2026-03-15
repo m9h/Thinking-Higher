@@ -268,3 +268,54 @@ export interface TaskResult {
   completedAt: number;
   summary: TaskSummary;
 }
+
+export interface ReversalTrialData extends TrialData {
+  taskType: "reversal-learning";
+  chosenArm: 0 | 1 | 2;
+  reward: 0 | 1;
+  rewardProbabilities: [number, number, number];
+  qValues: [number, number, number];
+  phase: "pre-reversal" | "post-reversal";
+  trialInPhase: number;
+}
+
+export interface TwoStepTrialData extends TrialData {
+  taskType: "two-step";
+  stage1Choice: 0 | 1;
+  stage2State: 0 | 1;
+  stage2Choice: 0 | 1;
+  transitionType: "common" | "rare";
+  reward: 0 | 1;
+  rewardProbabilities: number[];
+  stage1RT: number;
+  stage2RT: number;
+}
+
+export interface HanabiAction {
+  type: "play" | "discard" | "hint-color" | "hint-value";
+  player: "human" | "ai";
+  cardIndex?: number;
+  hintTarget?: "human" | "ai";
+  hintValue?: string;
+  timestamp: number;
+}
+
+export interface HanabiTrialData extends TrialData {
+  taskType: "hanabi";
+  turnNumber: number;
+  action: HanabiAction;
+  gameState: {
+    score: number;
+    hintsRemaining: number;
+    mistakesRemaining: number;
+    fireworks: Record<string, number>;
+  };
+}
+
+export interface ChatTrialData extends TrialData {
+  taskType: "chat-simulation";
+  stageId: string;
+  stageName: string;
+  messageCount: number;
+  assessmentScores?: FeedbackScores;
+}
