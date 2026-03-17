@@ -1,5 +1,8 @@
 "use client";
 
+import CentaurComparison from "./CentaurComparison";
+import type { CentaurComparisonResult } from "./CentaurComparison";
+
 interface TaskSummary {
   totalTrials: number;
   completedTrials: number;
@@ -15,6 +18,8 @@ interface TaskDebriefProps {
   taskType: string;
   rwFit?: { alpha: number; tau: number; qValuesOverTime: [number, number][] };
   trials?: any[];
+  comparisonResult?: CentaurComparisonResult | null;
+  comparisonLoading?: boolean;
   onContinue: () => void;
 }
 
@@ -40,6 +45,8 @@ export default function TaskDebrief({
   summary,
   taskType,
   rwFit,
+  comparisonResult,
+  comparisonLoading,
   onContinue,
 }: TaskDebriefProps) {
   return (
@@ -230,6 +237,12 @@ export default function TaskDebrief({
         )}
 
         <p className="task-text">{debriefText}</p>
+
+        <CentaurComparison
+          result={comparisonResult ?? null}
+          loading={comparisonLoading}
+          taskType={taskType}
+        />
 
         <button className="start-btn" onClick={onContinue}>
           Continue

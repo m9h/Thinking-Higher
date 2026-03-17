@@ -85,6 +85,9 @@ export default function TaskOrchestrator({ config }: TaskOrchestratorProps) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [trials, setTrials] = useState<any[]>([]);
   const [rwFit, setRwFit] = useState<RWFit | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [comparisonResult, setComparisonResult] = useState<any>(null);
+  const [comparisonLoading, setComparisonLoading] = useState(false);
   const taskStartRef = useRef<number>(0);
 
   const handleStart = useCallback(() => {
@@ -115,6 +118,27 @@ export default function TaskOrchestrator({ config }: TaskOrchestratorProps) {
     [config.taskId, config.taskType]
   );
 
+  const fetchComparison = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (taskType: string, taskTrials: any[]) => {
+      setComparisonLoading(true);
+      fetch("/api/compare", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          taskType,
+          trials: taskTrials,
+          options: { offline: true },
+        }),
+      })
+        .then((r) => r.json())
+        .then((data) => setComparisonResult(data.comparison))
+        .catch(() => {})
+        .finally(() => setComparisonLoading(false));
+    },
+    []
+  );
+
   const handleBanditComplete = useCallback(
     async (banditTrials: BanditTrialData[], taskSummary: TaskSummary) => {
       setTrials(banditTrials);
@@ -131,9 +155,12 @@ export default function TaskOrchestrator({ config }: TaskOrchestratorProps) {
         }
       }
 
+      // Fire Centaur comparison (non-blocking)
+      fetchComparison(config.taskType, banditTrials);
+
       setPhase("debrief");
     },
-    [persistResult]
+    [persistResult, fetchComparison, config.taskType]
   );
 
   const handleARCComplete = useCallback(
@@ -161,9 +188,13 @@ export default function TaskOrchestrator({ config }: TaskOrchestratorProps) {
       setTrials(twoStepTrials);
       setSummary(taskSummary);
       persistResult(twoStepTrials, taskSummary);
+
+      // Fire Centaur comparison (non-blocking)
+      fetchComparison(config.taskType, twoStepTrials);
+
       setPhase("debrief");
     },
-    [persistResult]
+    [persistResult, fetchComparison, config.taskType]
   );
 
   const handleHanabiComplete = useCallback(
@@ -265,6 +296,8 @@ export default function TaskOrchestrator({ config }: TaskOrchestratorProps) {
       taskType={config.taskType}
       rwFit={rwFit ?? undefined}
       trials={trials}
+      comparisonResult={comparisonResult}
+      comparisonLoading={comparisonLoading}
       onContinue={handleContinue}
     />
   );
