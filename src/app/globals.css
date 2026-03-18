@@ -579,15 +579,17 @@ body {
   font-family: 'Syne', sans-serif;
   font-size: 32px;
   font-weight: 700;
-  line-height: 1.3;
+  line-height: 1.5;
   margin-bottom: 16px;
-  padding-bottom: 2px;
+  overflow: visible;
   color: var(--text);
 }
 
 .start-title em {
   font-style: italic;
   color: var(--accent);
+  display: inline-block;
+  padding-bottom: 4px;
 }
 
 .start-desc {
