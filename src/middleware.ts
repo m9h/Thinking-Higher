@@ -9,6 +9,8 @@ const publicPaths = [
   "/api/chat",
   "/api/sessions",
   "/api/profile",
+  "/api/compare",
+  "/api/email",
   "/auth/signin",
 ];
 
