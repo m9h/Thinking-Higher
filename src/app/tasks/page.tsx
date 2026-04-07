@@ -1,4 +1,5 @@
 import Link from "next/link";
+import CatalogCard from "@/components/CatalogCard";
 
 const TASK_CATALOG = [
   {
@@ -46,15 +47,15 @@ const TASK_CATALOG = [
     category: "Theory of Mind",
     icon: "\u{1F386}",
   },
-  {
-    id: "chat-simulation",
-    title: "Junior Software Developer Simulation at Vela",
-    description:
-      "Design a customer onboarding page at Vela and navigate stakeholder conversations. Practice higher-order thinking and communication skills.",
-    duration: "15-20 min",
-    category: "Communication & Thinking",
-    icon: "\u{1F4AC}",
-  },
+  // {
+  //   id: "chat-simulation",
+  //   title: "Junior Software Developer at Vela",
+  //   description:
+  //     "Sit in on Monday's team meeting, review Marcus's prototype, then walk Alex through your development approach. Practice higher-order thinking and stakeholder communication.",
+  //   duration: "15–20 min",
+  //   category: "Software Engineering",
+  //   icon: "💻",
+  // },
 ];
 
 export default function TaskCatalogPage() {
@@ -71,7 +72,7 @@ export default function TaskCatalogPage() {
         >
           <h1
             style={{
-              fontFamily: "'Syne', sans-serif",
+              fontFamily: "'Space Grotesk', sans-serif",
               fontSize: 24,
               fontWeight: 700,
               color: "var(--text)",
@@ -99,15 +100,15 @@ export default function TaskCatalogPage() {
         {TASK_CATALOG.map((task) => {
           const href = `/tasks/${task.id}`;
           return (
-            <Link key={task.id} href={href} className="catalog-card">
-              <div className="catalog-icon">{task.icon}</div>
-              <div className="catalog-title">{task.title}</div>
-              <div className="catalog-desc">{task.description}</div>
-              <div className="catalog-meta">
-                <span className="catalog-badge">{task.category}</span>
-                <span className="catalog-duration">{task.duration}</span>
-              </div>
-            </Link>
+            <CatalogCard
+              key={task.id}
+              href={href}
+              icon={task.icon}
+              title={task.title}
+              description={task.description}
+              badge={task.category}
+              duration={task.duration}
+            />
           );
         })}
       </div>
