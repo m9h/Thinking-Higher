@@ -30,7 +30,7 @@ export default function Home() {
               color: "var(--accent)",
             }}
           >
-            Try Workplace Sim
+            Try Work Simulation
           </Link>
         </div>
       </div>

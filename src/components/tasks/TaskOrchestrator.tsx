@@ -80,7 +80,7 @@ interface TaskOrchestratorProps {
 type Phase = "instructions" | "task" | "debrief";
 
 export default function TaskOrchestrator({ config }: TaskOrchestratorProps) {
-  const [phase, setPhase] = useState<Phase>("instructions");
+  const [phase, setPhase] = useState<Phase>(config.taskType === "chat-simulation" ? "task" : "instructions");
   const [summary, setSummary] = useState<TaskSummary | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [trials, setTrials] = useState<any[]>([]);
