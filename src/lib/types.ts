@@ -18,6 +18,35 @@ export interface TurnConfig {
   wrapUpSignalTurn: number;
 }
 
+export interface SituationParticipant {
+  name: string;
+  role: string;
+  isYou?: boolean;
+  avatarColor?: string;
+}
+
+export interface SituationBriefData {
+  context: string;
+  participants: SituationParticipant[];
+  goal: string;
+  hints: string[];
+}
+
+export interface ComprehensionOption {
+  id: string;
+  text: string;
+  correct: boolean;
+}
+
+export interface ComprehensionQuestion {
+  id: string;
+  type: "mc" | "openended";
+  prompt: string;
+  options?: ComprehensionOption[];
+}
+
+export type StageType = "chat" | "video-chat" | "chat-artifact";
+
 // --- Deliberate Lab-compatible Agent Types ---
 // Maps to PAIR-code/deliberate-lab utils/src/agent.ts
 
@@ -75,7 +104,13 @@ export interface StageDefinition {
   id: string;
   order: number;
   badge: string;
+  stageTitle?: string;
   description: string;
+  stageType?: StageType;
+  videoComponent?: string;
+  artifactSrc?: string;
+  comprehensionQuestions?: ComprehensionQuestion[];
+  situationBrief?: SituationBriefData;
   turnConfig: TurnConfig;
   channelType: "1:1" | "group";
   agentProfile: AgentProfile;
@@ -101,9 +136,15 @@ export interface Stage {
   role: string;
   color: string;
   badge: string;
+  stageTitle: string;
   desc: string;
   avatar: string;
   systemPrompt: string;
+  stageType: StageType;
+  videoComponent?: string;
+  artifactSrc?: string;
+  comprehensionQuestions?: ComprehensionQuestion[];
+  situationBrief?: SituationBriefData;
 }
 
 // --- Chat ---

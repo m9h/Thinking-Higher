@@ -8,6 +8,10 @@ import Sidebar from "./Sidebar";
 import MessageBubble from "./MessageBubble";
 import TypingIndicator from "./TypingIndicator";
 import FeedbackOverlay from "./FeedbackOverlay";
+import VideoMeeting from "./VideoMeeting";
+import ComprehensionCheck from "./ComprehensionCheck";
+import ArtifactPanel from "./ArtifactPanel";
+import SituationBrief from "./SituationBrief";
 
 interface DisplayMessage {
   id: string;
@@ -18,7 +22,9 @@ interface DisplayMessage {
   avatar: string;
 }
 
-// --- Persistence helpers (fire-and-forget to API) ---
+type StagePhase = "video" | "chat" | "quiz";
+
+// --- Persistence helpers (fire-and-forget) ---
 
 async function apiCreateSession(scenarioId: string): Promise<{ id: string; participantId: string }> {
   const res = await fetch("/api/sessions", {
@@ -50,22 +56,26 @@ interface SimulationProps {
   onComplete?: (trials: ChatTrialData[], summary: TaskSummary) => void;
 }
 
+const ICON_OPTIONS = ["🧑‍💻", "👩‍💻", "👨‍💻", "🦊", "🐼", "🦁", "🌟", "🚀", "🎯", "⚡", "🌊", "🔥"];
+
 export default function Simulation({ onComplete }: SimulationProps = {}) {
+  const [userProfile, setUserProfile] = useState<{ name: string; icon: string } | null>(null);
+  const [profileName, setProfileName] = useState("");
+  const [profileIcon, setProfileIcon] = useState("🧑‍💻");
   const [started, setStarted] = useState(false);
   const [currentStage, setCurrentStage] = useState(0);
+  const [stagePhase, setStagePhase] = useState<StagePhase>("video");
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
-  const [conversationHistory, setConversationHistory] = useState<
-    { role: string; content: string }[]
-  >([]);
+  const [conversationHistory, setConversationHistory] = useState<{ role: string; content: string }[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [stageMessageCount, setStageMessageCount] = useState(0);
   const [inputValue, setInputValue] = useState("");
   const [showNextBar, setShowNextBar] = useState(false);
   const [simulationComplete, setSimulationComplete] = useState(false);
+  const [completedStages, setCompletedStages] = useState<Set<number>>(new Set());
+  const [visitedStages, setVisitedStages] = useState<Set<number>>(new Set([0]));
   const [showFeedback, setShowFeedback] = useState(false);
-  const [feedbackScores, setFeedbackScores] = useState<FeedbackScores | null>(
-    null
-  );
+  const [feedbackScores, setFeedbackScores] = useState<FeedbackScores | null>(null);
   const [isTyping, setIsTyping] = useState(false);
   const [readOnly, setReadOnly] = useState(false);
 
@@ -76,11 +86,9 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const msgIdCounter = useRef(0);
 
-  // Persistence refs
   const sessionIdRef = useRef<string | null>(null);
   const stageTranscriptRef = useRef<TranscriptEntry[]>([]);
   const simulationStartRef = useRef<number>(0);
-  const stageStartRef = useRef<number>(0);
 
   const nextMsgId = () => `msg-${++msgIdCounter.current}`;
 
@@ -92,131 +100,88 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
     scrollToBottom();
   }, [messages, isTyping, scrollToBottom]);
 
-  const addSystemMessage = useCallback(
-    (text: string) => {
+  const addSystemMessage = useCallback((text: string) => {
+    setMessages((prev) => [
+      ...prev,
+      { id: nextMsgId(), type: "system", sender: "System", text, color: "var(--system)", avatar: "S" },
+    ]);
+  }, []);
+
+  const getAIOpener = useCallback(async (stageIndex: number) => {
+    const stage = STAGES[stageIndex];
+    setIsLoading(true);
+    setIsTyping(true);
+
+    try {
+      const text = await callLLM({
+        system: stage.systemPrompt,
+        messages: [{ role: "user", content: "[Start the conversation with your opening message.]" }],
+      });
+      const now = Date.now();
+      setIsTyping(false);
       setMessages((prev) => [
         ...prev,
-        {
-          id: nextMsgId(),
-          type: "system",
-          sender: "System",
-          text,
-          color: "var(--system)",
-          avatar: "S",
-        },
+        { id: nextMsgId(), type: "ai", sender: stage.name, text, color: stage.color, avatar: stage.avatar },
       ]);
-    },
-    []
-  );
+      setConversationHistory([{ role: "assistant", content: text }]);
+      stageTranscriptRef.current.push({ role: "assistant", content: text, timestamp: now, responseTimeMs: null });
+    } catch {
+      setIsTyping(false);
+      const fallbacks = [
+        "Alright — any questions before we break?",
+        "Hey! So I just finished the prototype — want to walk through it together?",
+        "Hey — before you dive in, I want to hear how you're thinking about building this. Walk me through your approach.",
+      ];
+      const text = fallbacks[stageIndex] ?? "Let's get started.";
+      const now = Date.now();
+      setMessages((prev) => [
+        ...prev,
+        { id: nextMsgId(), type: "ai", sender: stage.name, text, color: stage.color, avatar: stage.avatar },
+      ]);
+      setConversationHistory([{ role: "assistant", content: text }]);
+      stageTranscriptRef.current.push({ role: "assistant", content: text, timestamp: now, responseTimeMs: null });
+    }
+    setIsLoading(false);
+  }, []);
 
-  const getAIOpener = useCallback(
-    async (stageIndex: number) => {
-      const stage = STAGES[stageIndex];
-      setIsLoading(true);
-      setIsTyping(true);
+  const loadStage = useCallback((stageIndex: number) => {
+    const stage = STAGES[stageIndex];
+    setCurrentStage(stageIndex);
+    setVisitedStages(prev => new Set(prev).add(stageIndex));
+    setStageMessageCount(0);
+    setShowNextBar(false);
+    setReadOnly(false);
+    setMessages([]);
+    setConversationHistory([]);
+    stageTranscriptRef.current = [];
 
-      try {
-        const text = await callLLM({
-          system: stage.systemPrompt,
-          messages: [
-            {
-              role: "user",
-              content:
-                "[Start the conversation with your opening message.]",
-            },
-          ],
-        });
-
-        const now = Date.now();
-        setIsTyping(false);
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: nextMsgId(),
-            type: "ai",
-            sender: stage.name,
-            text,
-            color: stage.color,
-            avatar: stage.avatar,
-          },
-        ]);
-        setConversationHistory([{ role: "assistant", content: text }]);
-
-        // Record opener in transcript
-        stageTranscriptRef.current.push({
-          role: "assistant",
-          content: text,
-          timestamp: now,
-          responseTimeMs: null,
-        });
-      } catch {
-        setIsTyping(false);
-        const fallbacks = [
-          "Hey! Glad we could sync before you dive in. I wanted to walk you through the onboarding form designs.",
-          "Hey, I was just going through your PR for the onboarding form — got a few minutes to chat? I spotted something.",
-          "Hey! Alex mentioned you had an update on the onboarding feature?",
-        ];
-        const text = fallbacks[stageIndex];
-        const now = Date.now();
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: nextMsgId(),
-            type: "ai",
-            sender: stage.name,
-            text,
-            color: stage.color,
-            avatar: stage.avatar,
-          },
-        ]);
-        setConversationHistory([{ role: "assistant", content: text }]);
-
-        stageTranscriptRef.current.push({
-          role: "assistant",
-          content: text,
-          timestamp: now,
-          responseTimeMs: null,
-        });
-      }
-
-      setIsLoading(false);
-    },
-    []
-  );
-
-  const loadStage = useCallback(
-    (stageIndex: number) => {
-      setCurrentStage(stageIndex);
-      setStageMessageCount(0);
-      setShowNextBar(false);
-      setReadOnly(false);
-      setMessages([]);
-      setConversationHistory([]);
-      stageTranscriptRef.current = [];
-
-      addSystemMessage(
-        `Starting conversation with ${STAGES[stageIndex].name} (${STAGES[stageIndex].role})`
-      );
+    if (stage.stageType === "video-chat") {
+      setStagePhase("video");
+      // AI opener will be fetched after video completes
+    } else {
+      setStagePhase("chat");
+      addSystemMessage(`Starting conversation with ${stage.name} (${stage.role})`);
       getAIOpener(stageIndex);
-    },
-    [addSystemMessage, getAIOpener]
-  );
+    }
+  }, [addSystemMessage, getAIOpener]);
 
   const startSimulation = useCallback(async () => {
     setStarted(true);
     simulationStartRef.current = Date.now();
-
-    // Create session in persistence layer
     try {
       const session = await apiCreateSession(SCENARIO.id);
       sessionIdRef.current = session.id;
     } catch {
-      // Persistence failure shouldn't block the simulation
       console.warn("Failed to create session — continuing without persistence");
     }
-
     loadStage(0);
   }, [loadStage]);
+
+  const handleVideoComplete = useCallback(() => {
+    setStagePhase("chat");
+    addSystemMessage("Sarah opens the floor for questions.");
+    getAIOpener(currentStage);
+  }, [currentStage, addSystemMessage, getAIOpener]);
 
   const sendMessage = useCallback(async () => {
     const text = inputValue.trim();
@@ -230,27 +195,12 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
 
     setMessages((prev) => [
       ...prev,
-      {
-        id: nextMsgId(),
-        type: "user",
-        sender: "You",
-        text,
-        color: "var(--accent)",
-        avatar: "Y",
-      },
+      { id: nextMsgId(), type: "user", sender: userName, text, color: "var(--accent)", avatar: userIcon },
     ]);
-
-    // Record user message in transcript
-    stageTranscriptRef.current.push({
-      role: "user",
-      content: text,
-      timestamp: sendTimestamp,
-      responseTimeMs: null,
-    });
+    stageTranscriptRef.current.push({ role: "user", content: text, timestamp: sendTimestamp, responseTimeMs: null });
 
     const newHistory = [...conversationHistory, { role: "user", content: text }];
     setConversationHistory(newHistory);
-
     setIsLoading(true);
     setIsTyping(true);
 
@@ -261,9 +211,7 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
       const isLastExchange = newCount >= stageDefinition.turnConfig.wrapUpSignalTurn;
       const systemPrompt =
         stage.systemPrompt +
-        (isLastExchange
-          ? " After this message, naturally signal the conversation is wrapping up. Do not force-end abruptly."
-          : "");
+        (isLastExchange ? " After this message, naturally signal the conversation is wrapping up." : "");
 
       const reply = await callLLM({ system: systemPrompt, messages: recentHistory });
       const responseTimeMs = Date.now() - sendTimestamp;
@@ -271,52 +219,21 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
       setIsTyping(false);
       setMessages((prev) => [
         ...prev,
-        {
-          id: nextMsgId(),
-          type: "ai",
-          sender: stage.name,
-          text: reply,
-          color: stage.color,
-          avatar: stage.avatar,
-        },
+        { id: nextMsgId(), type: "ai", sender: stage.name, text: reply, color: stage.color, avatar: stage.avatar },
       ]);
-      setConversationHistory((prev) => [
-        ...prev,
-        { role: "assistant", content: reply },
-      ]);
-
-      allAssessmentsRef.current.push({
-        stage: stage.name,
-        userMessage: text,
-        aiReply: reply,
-        responseTimeMs,
-      });
-
-      // Record AI reply in transcript
-      stageTranscriptRef.current.push({
-        role: "assistant",
-        content: reply,
-        timestamp: Date.now(),
-        responseTimeMs,
-      });
+      setConversationHistory((prev) => [...prev, { role: "assistant", content: reply }]);
+      allAssessmentsRef.current.push({ stage: stage.name, userMessage: text, aiReply: reply, responseTimeMs });
+      stageTranscriptRef.current.push({ role: "assistant", content: reply, timestamp: Date.now(), responseTimeMs });
 
       if (newCount >= stageDefinition.turnConfig.minTurns) setShowNextBar(true);
     } catch {
       setIsTyping(false);
       setMessages((prev) => [
         ...prev,
-        {
-          id: nextMsgId(),
-          type: "ai",
-          sender: stage.name,
-          text: "Let's continue this after the review.",
-          color: stage.color,
-          avatar: stage.avatar,
-        },
+        { id: nextMsgId(), type: "ai", sender: stage.name, text: "Let's continue this shortly.", color: stage.color, avatar: stage.avatar },
       ]);
       if (newCount >= stageDefinition.turnConfig.minTurns) setShowNextBar(true);
     }
-
     setIsLoading(false);
   }, [inputValue, isLoading, currentStage, stageMessageCount, conversationHistory]);
 
@@ -332,7 +249,7 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
       taskType: "chat-simulation" as const,
       stageId: s.id,
       stageName: s.name,
-      messageCount: allAssessmentsRef.current.filter(a => a.stage === s.name).length,
+      messageCount: allAssessmentsRef.current.filter((a) => a.stage === s.name).length,
       assessmentScores: i === STAGES.length - 1 ? scores : undefined,
     }));
     const summary: TaskSummary = {
@@ -354,173 +271,255 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
     try {
       const raw = await callLLM({
         system: SCENARIO.assessmentConfig.evaluatorPrompt,
-        messages: [
-          {
-            role: "user",
-            content: `Here are the student's responses across 3 stages of a workplace simulation:\n\n${conversationSummary}\n\nEvaluate their higher-order thinking and communication skills.`,
-          },
-        ],
+        messages: [{
+          role: "user",
+          content: `Here are the student's responses across 3 stages of the Vela SDE workplace simulation:\n\n${conversationSummary}\n\nEvaluate their higher-order thinking and communication skills.`,
+        }],
       });
       const clean = raw.replace(/```json|```/g, "").trim();
       const scores: FeedbackScores = JSON.parse(clean);
       setFeedbackScores(scores);
       notifyComplete(scores);
-
-      // Persist assessment
       if (sessionIdRef.current) {
-        const rts = allAssessmentsRef.current.map((a) => a.responseTimeMs);
-        apiSaveAssessment(sessionIdRef.current, scores, rts).catch(() => {});
+        apiSaveAssessment(sessionIdRef.current, scores, allAssessmentsRef.current.map((a) => a.responseTimeMs)).catch(() => {});
       }
     } catch {
       const fallbackScores: FeedbackScores = {
-        analytical: 72,
-        communication: 68,
-        ownership: 75,
-        adaptability: 70,
-        feedback:
-          "You navigated three distinct stakeholder conversations under pressure. Your ability to adapt your communication style across technical and non-technical audiences is a strong foundation to build on.",
+        analytical: 72, communication: 68, ownership: 75, adaptability: 70,
+        feedback: "You navigated three distinct stakeholder conversations at Vela. Your ability to adapt your communication style across the PM, UX, and tech lead is a strong foundation to build on.",
       };
       setFeedbackScores(fallbackScores);
       notifyComplete(fallbackScores);
-
       if (sessionIdRef.current) {
-        const rts = allAssessmentsRef.current.map((a) => a.responseTimeMs);
-        apiSaveAssessment(sessionIdRef.current, fallbackScores, rts).catch(() => {});
+        apiSaveAssessment(sessionIdRef.current, fallbackScores, allAssessmentsRef.current.map((a) => a.responseTimeMs)).catch(() => {});
       }
     }
   }, [notifyComplete]);
 
-  const advanceStage = useCallback(() => {
+  // Save transcript + advance to next stage or generate feedback
+  const doAdvanceStage = useCallback(() => {
     savedMessagesRef.current[currentStage] = messages;
     savedHistoryRef.current[currentStage] = conversationHistory;
-
-    // Persist stage transcript
+    setCompletedStages(prev => { const n = new Set(prev); n.add(currentStage); return n; });
     if (sessionIdRef.current) {
-      const stageId = STAGES[currentStage].id;
-      apiSaveTranscript(sessionIdRef.current, stageId, stageTranscriptRef.current).catch(() => {});
+      apiSaveTranscript(sessionIdRef.current, STAGES[currentStage].id, stageTranscriptRef.current).catch(() => {});
     }
-
-    if (currentStage < 2) {
+    if (currentStage < STAGES.length - 1) {
       loadStage(currentStage + 1);
     } else {
       generateFeedback();
     }
   }, [currentStage, messages, conversationHistory, loadStage, generateFeedback]);
 
-  const reviewStage = useCallback(
-    (stageIndex: number) => {
-      setShowFeedback(false);
-      setCurrentStage(stageIndex);
-      setReadOnly(true);
-      setShowNextBar(true);
+  const advanceStage = useCallback(() => {
+    const stageType = STAGES[currentStage].stageType;
+    if (stageType === "video-chat" && stagePhase === "chat") {
+      setStagePhase("quiz");
+      return;
+    }
+    doAdvanceStage();
+  }, [currentStage, stagePhase, doAdvanceStage]);
 
-      const saved = savedMessagesRef.current[stageIndex];
-      if (saved) {
-        setMessages([
-          ...saved,
-          {
-            id: nextMsgId(),
-            type: "system",
-            sender: "System",
-            text: "Reviewing past conversation — read only",
-            color: "var(--system)",
-            avatar: "S",
-          },
-        ]);
+  const reviewStage = useCallback((stageIndex: number) => {
+    // Save current stage state before leaving
+    savedMessagesRef.current[currentStage] = messages;
+    savedHistoryRef.current[currentStage] = conversationHistory;
+
+    setShowFeedback(false);
+    setCurrentStage(stageIndex);
+    setStagePhase("chat");
+    setShowNextBar(false);
+    stageTranscriptRef.current = [];
+
+    if (simulationComplete) {
+      // After Alex finishes — read-only review
+      setReadOnly(true);
+      const saved = savedMessagesRef.current[stageIndex] ?? [];
+      setMessages([
+        ...saved,
+        { id: nextMsgId(), type: "system", sender: "System", text: "Reviewing past conversation — read only", color: "var(--system)", avatar: "S" },
+      ]);
+      setConversationHistory(savedHistoryRef.current[stageIndex] ?? []);
+      setStageMessageCount(0);
+      setShowNextBar(true);
+    } else {
+      // Mid-simulation — restore conversation and allow chatting
+      setReadOnly(false);
+      const savedMsgs = savedMessagesRef.current[stageIndex];
+      const savedHistory = savedHistoryRef.current[stageIndex];
+      if (savedMsgs && savedMsgs.length > 0) {
+        setMessages(savedMsgs);
+        setConversationHistory(savedHistory ?? []);
+        const userCount = savedMsgs.filter((m: DisplayMessage) => m.type === "user").length;
+        setStageMessageCount(userCount);
+        if (userCount >= SCENARIO.stages[stageIndex].turnConfig.minTurns) setShowNextBar(true);
+      } else {
+        const stage = STAGES[stageIndex];
+        setMessages([]);
+        setConversationHistory([]);
+        setStageMessageCount(0);
+        addSystemMessage(`Starting conversation with ${stage.name} (${stage.role})`);
+        getAIOpener(stageIndex);
       }
-    },
-    []
-  );
+    }
+  }, [currentStage, messages, conversationHistory, simulationComplete, addSystemMessage, getAIOpener]);
 
   const handleKey = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   };
 
   const stage = STAGES[currentStage];
+  const stageType = stage.stageType;
+  const userName = userProfile?.name ?? "You";
+  const userIcon = userProfile?.icon ?? "🧑‍💻";
 
-  // Start screen
-  if (!started) {
+  // --- Profile setup screen ---
+  if (!userProfile) {
     return (
-      <div className="start-screen" id="startScreen">
+      <div className="start-screen">
         <div className="start-card">
-          <div className="start-tag">Junior SDE · Simulation #{SCENARIO.id}</div>
-          <h1 className="start-title">
-            From requirements
-            <br />
-            to a <em>real problem.</em>
-          </h1>
-          <p className="start-desc">
-            {SCENARIO.description}
-          </p>
-          <div className="start-stages">
-            {STAGES.map((s) => (
-              <div key={s.id} className="start-stage">
-                <div
-                  className="start-stage-dot"
-                  style={{ background: s.color }}
-                />
-                <span className="start-stage-name">{s.name}</span>
-                <span className="start-stage-desc">
-                  {s.role} — {s.desc.toLowerCase()}
-                </span>
-              </div>
-            ))}
+          <div className="start-tag">Before We Begin</div>
+          <h1 className="start-title">Who are <em>you?</em></h1>
+          <p className="start-desc">We'll use your name and icon to personalize the simulation.</p>
+
+          <div style={{ marginBottom: 24 }}>
+            <label className="profile-label">Your name</label>
+            <input
+              className="profile-input"
+              type="text"
+              placeholder="First name"
+              value={profileName}
+              onChange={(e) => setProfileName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && profileName.trim()) setUserProfile({ name: profileName.trim(), icon: profileIcon }); }}
+              autoFocus
+            />
           </div>
-          <button className="start-btn" onClick={startSimulation}>
-            Begin Simulation →
+
+          <div style={{ marginBottom: 36 }}>
+            <label className="profile-label">Your icon</label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+              {ICON_OPTIONS.map((icon) => (
+                <button
+                  key={icon}
+                  onClick={() => setProfileIcon(icon)}
+                  style={{
+                    width: 52, height: 52, borderRadius: 12, fontSize: 26, cursor: "pointer",
+                    border: `2px solid ${profileIcon === icon ? "var(--accent)" : "var(--border)"}`,
+                    background: profileIcon === icon ? "rgba(240,192,96,0.12)" : "var(--surface2)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    transition: "border-color 0.15s, background 0.15s",
+                  }}
+                >
+                  {icon}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <button
+            className="start-btn"
+            disabled={!profileName.trim()}
+            onClick={() => setUserProfile({ name: profileName.trim(), icon: profileIcon })}
+          >
+            Continue →
           </button>
         </div>
       </div>
     );
   }
 
-  return (
-    <>
-      {/* Top Bar */}
-      <div className="topbar">
-        <div className="logo">
-          Think<span>Higher</span>
-        </div>
-        <div className="scenario-title">
-          Scenario {SCENARIO.id} — &quot;{SCENARIO.title}&quot;
-        </div>
-        <div className="stage-indicators">
-          {STAGES.map((_, i) => {
-            const classes = [
-              "stage-dot",
-              i < currentStage || simulationComplete ? "done" : "",
-              i === currentStage ? "active" : "",
-            ]
-              .filter(Boolean)
-              .join(" ");
-            return <div key={i} className={classes} data-stage={i} />;
-          })}
+  // --- Start screen ---
+  if (!started) {
+    return (
+      <div className="start-screen" id="startScreen">
+        <div className="start-card">
+          <div className="start-tag">Vela SDE Simulation 001</div>
+          <h1 className="start-title">
+            Build the onboarding module
+            <br />
+            <em>from scratch.</em>
+          </h1>
+          <p className="start-desc">{SCENARIO.description}</p>
+          <div className="start-stages">
+            {STAGES.map((s) => (
+              <div key={s.id} className="start-stage">
+                <div className="start-stage-dot" style={{ background: s.color }} />
+                <span className="start-stage-name">{s.stageTitle}</span>
+                <span className="start-stage-desc">{s.desc}</span>
+              </div>
+            ))}
+          </div>
+          <button className="start-btn" onClick={startSimulation}>Begin Simulation →</button>
         </div>
       </div>
+    );
+  }
 
-      {/* Main */}
+  // --- Video phase (Stage 1 only) ---
+  if (stagePhase === "video") {
+    return (
+      <>
+        <div className="topbar">
+          <div className="logo">Think<span>Higher</span></div>
+          <div className="scenario-title">Vela SDE Simulation 001 — Customer Onboarding Sprint</div>
+          <StageDots currentStage={currentStage} simulationComplete={simulationComplete} />
+        </div>
+        <div className="main">
+          <Sidebar currentStage={currentStage} simulationComplete={simulationComplete} completedStages={completedStages} visitedStages={visitedStages} onReviewStage={reviewStage} />
+          <div className="video-meeting-area">
+            {stage.situationBrief && <SituationBrief data={stage.situationBrief} userProfile={userProfile ?? undefined} />}
+            <div className="video-meeting-frame">
+              <VideoMeeting onComplete={handleVideoComplete} userName={userName} userIcon={userIcon} />
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  // --- Quiz phase (Stage 1 only) ---
+  if (stagePhase === "quiz") {
+    const questions = stage.comprehensionQuestions ?? [];
+    return (
+      <>
+        <div className="topbar">
+          <div className="logo">Think<span>Higher</span></div>
+          <div className="scenario-title">Vela SDE Simulation 001 — Customer Onboarding Sprint</div>
+          <StageDots currentStage={currentStage} simulationComplete={simulationComplete} />
+        </div>
+        <div className="main">
+          <Sidebar currentStage={currentStage} simulationComplete={simulationComplete} completedStages={completedStages} visitedStages={visitedStages} onReviewStage={reviewStage} />
+          <div className="comprehension-area">
+            {stage.situationBrief && <SituationBrief key={`${currentStage}-quiz`} data={stage.situationBrief} defaultCollapsed userProfile={userProfile ?? undefined} />}
+            <div style={{ marginTop: 16, width: "100%", maxWidth: 600 }}>
+              <ComprehensionCheck questions={questions} onComplete={doAdvanceStage} />
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  // --- Chat (and chat-artifact) phase ---
+  const hasArtifact = stageType === "chat-artifact" && !!stage.artifactSrc;
+  const isQuizPending = stageType === "video-chat" && stagePhase === "chat";
+
+  return (
+    <>
+      <div className="topbar">
+        <div className="logo">Think<span>Higher</span></div>
+        <div className="scenario-title">Vela SDE Simulation 001 — Customer Onboarding Sprint</div>
+        <StageDots currentStage={currentStage} simulationComplete={simulationComplete} />
+      </div>
+
       <div className="main">
-        <Sidebar
-          currentStage={currentStage}
-          simulationComplete={simulationComplete}
-          onReviewStage={reviewStage}
-        />
+        <Sidebar currentStage={currentStage} simulationComplete={simulationComplete} completedStages={completedStages} visitedStages={visitedStages} onReviewStage={reviewStage} />
 
         <div className="chat-area">
+          {stage.situationBrief && <SituationBrief key={`${currentStage}-${stagePhase}`} data={stage.situationBrief} defaultCollapsed userProfile={userProfile ?? undefined} />}
           <div className="stage-header">
-            <div
-              className="stage-badge"
-              style={{
-                background: `${stage.color}22`,
-                color: stage.color,
-                border: `1px solid ${stage.color}44`,
-              }}
-            >
-              {stage.badge}
-              {readOnly ? " · Review" : ""}
+            <div className="stage-badge" style={{ background: `${stage.color}22`, color: stage.color, border: `1px solid ${stage.color}44` }}>
+              {stage.badge}{readOnly ? " · Review" : ""}
             </div>
             <div className="stage-desc">{stage.desc}</div>
           </div>
@@ -528,14 +527,7 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
           <div className="messages">
             {messages.map((msg) =>
               msg.type === "system" ? (
-                <div
-                  key={msg.id}
-                  style={{
-                    display: "flex",
-                    justifyContent: "center",
-                    margin: "4px 0",
-                  }}
-                >
+                <div key={msg.id} style={{ display: "flex", justifyContent: "center", margin: "4px 0" }}>
                   <div className="system-bubble">{msg.text}</div>
                 </div>
               ) : (
@@ -549,51 +541,29 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
                 />
               )
             )}
-            {isTyping && (
-              <TypingIndicator
-                color={stage.color}
-                avatar={stage.avatar}
-                name={stage.name}
-              />
-            )}
+            {isTyping && <TypingIndicator color={stage.color} avatar={stage.avatar} name={stage.name} />}
             <div ref={messagesEndRef} />
           </div>
 
           {showNextBar && (
             <div className="next-stage-bar visible">
               <div className="next-stage-hint">
-                {readOnly ? (
-                  <span>
-                    <em>Read-only review mode.</em> Click any name in the
-                    sidebar to switch stages.
-                  </span>
+                {simulationComplete && readOnly ? (
+                  <span><em>Read-only review mode.</em> Click any stage in the sidebar to switch.</span>
                 ) : stageMessageCount >= SCENARIO.stages[currentStage].turnConfig.wrapUpSignalTurn ? (
-                  <span>
-                    <em>Conversation is wrapping up.</em> Continue or move to the
-                    next stage when ready.
-                  </span>
+                  <span><em>Conversation is wrapping up.</em> Continue or move on when ready.</span>
                 ) : (
                   "Feel free to keep the conversation going, or move on when ready."
                 )}
               </div>
-              {readOnly ? (
-                <button
-                  className="next-stage-btn finish-btn"
-                  onClick={() => setShowFeedback(true)}
-                >
-                  View Feedback
-                </button>
-              ) : currentStage < 2 ? (
-                <button className="next-stage-btn" onClick={advanceStage}>
-                  Next Stage →
-                </button>
+              {simulationComplete && readOnly ? (
+                <button className="next-stage-btn finish-btn" onClick={() => setShowFeedback(true)}>View Feedback</button>
+              ) : isQuizPending ? (
+                <button className="next-stage-btn" onClick={advanceStage}>Continue to Quiz →</button>
+              ) : currentStage < STAGES.length - 1 ? (
+                <button className="next-stage-btn" onClick={advanceStage}>Next Stage →</button>
               ) : (
-                <button
-                  className="next-stage-btn finish-btn"
-                  onClick={advanceStage}
-                >
-                  Finish & See Feedback
-                </button>
+                <button className="next-stage-btn finish-btn" onClick={advanceStage}>Finish & See Feedback</button>
               )}
             </div>
           )}
@@ -603,11 +573,7 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
               <textarea
                 ref={inputRef}
                 className="input-box"
-                placeholder={
-                  readOnly
-                    ? "Read-only — simulation complete"
-                    : "Type your response..."
-                }
+                placeholder={readOnly ? "Read-only — simulation complete" : "Type your response..."}
                 rows={1}
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
@@ -616,23 +582,18 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
                 onInput={(e) => {
                   const el = e.target as HTMLTextAreaElement;
                   el.style.height = "auto";
-                  el.style.height =
-                    Math.min(el.scrollHeight, 120) + "px";
+                  el.style.height = Math.min(el.scrollHeight, 120) + "px";
                 }}
               />
-              <button
-                className="send-btn"
-                onClick={sendMessage}
-                disabled={isLoading || readOnly}
-              >
-                Send →
-              </button>
+              <button className="send-btn" onClick={sendMessage} disabled={isLoading || readOnly}>Send →</button>
             </div>
-            <div className="input-hint">
-              This is a simulation. Respond as you would in a real workplace.
-            </div>
+            <div className="input-hint">This is a simulation. Respond as you would in a real workplace.</div>
           </div>
         </div>
+
+        {hasArtifact && (
+          <ArtifactPanel src={stage.artifactSrc!} title="Vela Onboarding Prototype" />
+        )}
       </div>
 
       <FeedbackOverlay
@@ -644,5 +605,21 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
         }}
       />
     </>
+  );
+}
+
+// Extracted to avoid repeating in all render branches
+function StageDots({ currentStage, simulationComplete }: { currentStage: number; simulationComplete: boolean }) {
+  return (
+    <div className="stage-indicators">
+      {STAGES.map((_, i) => {
+        const classes = [
+          "stage-dot",
+          i < currentStage || simulationComplete ? "done" : "",
+          i === currentStage ? "active" : "",
+        ].filter(Boolean).join(" ");
+        return <div key={i} className={classes} data-stage={i} />;
+      })}
+    </div>
   );
 }

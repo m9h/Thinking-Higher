@@ -48,9 +48,9 @@ const TASK_CATALOG = [
   },
   {
     id: "chat-simulation",
-    title: "Workplace Simulation",
+    title: "Junior Software Developer Simulation at Vela",
     description:
-      "Navigate three stakeholder conversations. Practice higher-order thinking and communication.",
+      "Design a customer onboarding page at Vela and navigate stakeholder conversations. Practice higher-order thinking and communication skills.",
     duration: "15-20 min",
     category: "Communication & Thinking",
     icon: "\u{1F4AC}",
