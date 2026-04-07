@@ -4,6 +4,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { STAGES, SCENARIO } from "@/lib/scenarios";
 import { callLLM } from "@/lib/llm";
 import { Assessment, FeedbackScores, TranscriptEntry, ChatTrialData, TaskSummary } from "@/lib/types";
+import Link from "next/link";
 import Sidebar from "./Sidebar";
 import MessageBubble from "./MessageBubble";
 import TypingIndicator from "./TypingIndicator";
@@ -383,7 +384,6 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
           <p className="start-desc">We'll use your name and icon to personalize the simulation.</p>
 
           <div style={{ marginBottom: 24 }}>
-            <label className="profile-label">Your name</label>
             <input
               className="profile-input"
               type="text"
@@ -460,7 +460,7 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
     return (
       <>
         <div className="topbar">
-          <div className="logo">Think<span>Higher</span></div>
+          <Link href="/" className="logo" style={{ textDecoration: "none", cursor: "pointer" }}>Think<span>Higher</span></Link>
           <div className="scenario-title">Vela SDE Simulation 001 — Customer Onboarding Sprint</div>
           <StageDots currentStage={currentStage} simulationComplete={simulationComplete} />
         </div>
@@ -483,7 +483,7 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
     return (
       <>
         <div className="topbar">
-          <div className="logo">Think<span>Higher</span></div>
+          <Link href="/" className="logo" style={{ textDecoration: "none", cursor: "pointer" }}>Think<span>Higher</span></Link>
           <div className="scenario-title">Vela SDE Simulation 001 — Customer Onboarding Sprint</div>
           <StageDots currentStage={currentStage} simulationComplete={simulationComplete} />
         </div>
