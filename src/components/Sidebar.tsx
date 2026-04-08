@@ -1,6 +1,7 @@
 "use client";
 
 import { STAGES } from "@/lib/scenarios";
+import { StageV2Runtime } from "@/lib/types";
 
 interface SidebarProps {
   currentStage: number;
@@ -8,14 +9,46 @@ interface SidebarProps {
   completedStages: Set<number>;
   visitedStages: Set<number>;
   onReviewStage: (index: number) => void;
+  stagesV2?: StageV2Runtime[];
+  contextText?: string;
 }
 
-export default function Sidebar({ currentStage, simulationComplete, completedStages, visitedStages, onReviewStage }: SidebarProps) {
+export default function Sidebar({
+  currentStage,
+  simulationComplete,
+  completedStages,
+  visitedStages,
+  onReviewStage,
+  stagesV2,
+  contextText,
+}: SidebarProps) {
+  // V2 stages take priority; fall back to Vela V1 stages
+  const isV2 = !!stagesV2;
+  const stageList = isV2
+    ? stagesV2!.map((s) => ({
+        id: s.id,
+        color: s.agent.color,
+        stageTitle: s.title,
+        avatarLetter: s.agent.avatar,
+      }))
+    : STAGES.map((s) => ({
+        id: s.id,
+        color: s.color,
+        stageTitle: s.stageTitle,
+        avatarLetter: s.id.charAt(0).toUpperCase(),
+      }));
+
+  const defaultContext = isV2
+    ? null
+    : "You are a junior SDE in your second week at Vela, an IT asset management company. Your team is building the customer onboarding module this sprint — and you're leading the build.";
+
+  const shownContext = contextText ?? defaultContext;
+
   return (
     <div className="sidebar">
       <div className="sidebar-section">
         <div className="sidebar-label">Stages</div>
-        {STAGES.map((stage, i) => {
+        {stageList.map((stage, i) => {
           const isDone = completedStages.has(i) || visitedStages.has(i) || simulationComplete;
           const isActive = i === currentStage;
           const classes = [
@@ -49,14 +82,14 @@ export default function Sidebar({ currentStage, simulationComplete, completedSta
           );
         })}
       </div>
-      <div className="sidebar-section">
-        <div className="context-box">
-          <strong>Your Context</strong>
-          You are a junior SDE in your second week at Vela, an IT asset
-          management company. Your team is building the customer onboarding
-          module this sprint — and you&apos;re leading the build.
+      {shownContext && (
+        <div className="sidebar-section">
+          <div className="context-box">
+            <strong>Your Context</strong>
+            {shownContext}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
