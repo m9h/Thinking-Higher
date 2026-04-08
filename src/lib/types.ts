@@ -252,7 +252,128 @@ export interface SessionAssessment {
   completedAt: number;
 }
 
-// --- Cognitive Task Types ---
+// ─── Simulation V2 Schema Types ─────────────────────────────────────────────
+// Used by Ridgeline and future simulations. Vela uses the V1 types above.
+
+export type ConversationMode = "llm-only" | "director-actor" | "scripted-only";
+export type ArtifactType = "html" | "data-table" | "document" | "none";
+export type ProbeClassification = "strong" | "vague" | "conflates" | "off-topic";
+
+export interface KnowledgeConstraints {
+  canDo: string[];
+  cannotDo: string[];
+}
+
+export interface AgentDefinition {
+  name: string;
+  title: string;
+  avatar: string;
+  color: string;
+  personaPrompt: string;
+  assessmentRubric: string;
+  knowledgeConstraints?: KnowledgeConstraints;
+}
+
+export interface ProbeBranches {
+  strong: string;
+  vague: string;
+  conflates: string;
+  "off-topic": string;
+}
+
+export interface StructuredProbe {
+  id: string;
+  topic: string;
+  triggerAfterTurn: number;
+  evaluatorPrompt: string;
+  branches: ProbeBranches;
+  followUpInstruction: string;
+}
+
+export interface ArtifactDefinition {
+  type: ArtifactType;
+  title: string;
+  src: string;
+}
+
+export interface ComprehensionCheckV2 {
+  title: string;
+  questions: ComprehensionQuestion[];
+}
+
+export interface StageV2 {
+  id: string;
+  order: number;
+  title: string;
+  badge: string;
+  description: string;
+  stageType: StageType;
+  agentIds: string[];
+  situationBrief: SituationBriefData;
+  video?: { component: string; scriptRef?: string };
+  artifact: ArtifactDefinition | null;
+  turnConfig: TurnConfig;
+  conversationMode: ConversationMode;
+  structuredProbes: StructuredProbe[] | null;
+  scriptedClosing?: string;
+  actorSystemPrompt?: string;
+  constraints: string[];
+  comprehensionCheck: ComprehensionCheckV2;
+}
+
+export interface FacilitatorKey {
+  headwinds?: string[];
+  netEffect?: string;
+  rubricGuidance: { stage: string; notes: string }[];
+}
+
+export interface AssessmentConfigV2 {
+  scoringMethod: string;
+  evaluatorPrompt: string;
+  skillDimensions: SkillDimension[];
+  facilitatorKey?: FacilitatorKey;
+}
+
+export interface SimulationMeta {
+  title: string;
+  subtitle?: string;
+  role: string;
+  organization: string;
+  domain: string;
+  difficulty: string;
+  duration: string;
+  audience?: string;
+  description: string;
+}
+
+export interface SimulationV2 {
+  id: string;
+  version: string;
+  meta: SimulationMeta;
+  agents: Record<string, AgentDefinition>;
+  stages: StageV2[];
+  assessmentConfig: AssessmentConfigV2;
+}
+
+// Runtime-ready stage (after mapping from SimulationV2)
+export interface StageV2Runtime extends StageV2 {
+  agent: AgentDefinition; // primary agent (agentIds[0]) resolved
+}
+
+// Per-probe classification result collected during Stage 4
+export interface ProbeResult {
+  probeId: string;
+  topic: string;
+  classification: ProbeClassification;
+}
+
+// FeedbackScores V2 — flexible keys for different simulations
+export interface FeedbackScoresV2 {
+  scores: Record<string, number>;
+  feedback: string;
+}
+
+// ─── Cognitive Task Types ─────────────────────────────────────────────────────
 
 export interface TrialData {
   trialIndex: number;

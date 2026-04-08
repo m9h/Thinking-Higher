@@ -6,9 +6,10 @@ import { ComprehensionQuestion } from "@/lib/types";
 interface ComprehensionCheckProps {
   questions: ComprehensionQuestion[];
   onComplete: () => void;
+  title?: string;
 }
 
-export default function ComprehensionCheck({ questions, onComplete }: ComprehensionCheckProps) {
+export default function ComprehensionCheck({ questions, onComplete, title }: ComprehensionCheckProps) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [submitted, setSubmitted] = useState(false);
 
@@ -36,7 +37,7 @@ export default function ComprehensionCheck({ questions, onComplete }: Comprehens
     <div className="quiz-card">
         <div className="start-tag" style={{ marginBottom: 8 }}>Comprehension Check</div>
         <h2 style={{ fontFamily: "Syne, sans-serif", fontSize: 20, fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>
-          Before you move on
+          {title ?? "Before you move on"}
         </h2>
         <p style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.7, marginBottom: 28 }}>
           Quick check on what was decided in the meeting.

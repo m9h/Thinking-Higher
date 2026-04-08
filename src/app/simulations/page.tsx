@@ -13,6 +13,17 @@ const SIMULATIONS = [
     icon: "💻",
     available: true,
   },
+  {
+    id: "ridgeline-analyst",
+    href: "/simulations/ridgeline-university-analyst-001",
+    title: "Analyst, Office of the President — Ridgeline Community College",
+    description:
+      "Dig into enrollment trends and budget pressures with finance and enrollment officers, then present your strategic recommendation directly to the President. Practice analytical reasoning under institutional constraints.",
+    duration: "20–30 min",
+    role: "Higher Education",
+    icon: "🎓",
+    available: true,
+  },
 ];
 
 export default function SimulationsPage() {
