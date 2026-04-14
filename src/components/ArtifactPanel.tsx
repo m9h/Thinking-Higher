@@ -17,8 +17,11 @@ export default function ArtifactPanel({ src, title = "Prototype" }: ArtifactPane
   const [collapsed, setCollapsed] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [dragging, setDragging] = useState(false);
+
+  // Refs track drag state without triggering re-renders mid-drag
   const dragStartX = useRef(0);
   const dragStartWidth = useRef(DEFAULT_WIDTH);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -29,13 +32,25 @@ export default function ArtifactPanel({ src, title = "Prototype" }: ArtifactPane
 
   useEffect(() => {
     if (!dragging) return;
+
     const onMove = (e: MouseEvent) => {
-      const delta = dragStartX.current - e.clientX; // dragging left edge → moving left = wider
+      // Update the panel width directly on the DOM element — no React re-render per pixel
+      const delta = dragStartX.current - e.clientX;
+      const next = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, dragStartWidth.current + delta));
+      if (panelRef.current) {
+        panelRef.current.style.width = `${next}px`;
+      }
+    };
+
+    const onUp = (e: MouseEvent) => {
+      // Commit the final width to React state — this is the "fix" moment
+      const delta = dragStartX.current - e.clientX;
       const next = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, dragStartWidth.current + delta));
       setWidth(next);
       setExpanded(false);
+      setDragging(false);
     };
-    const onUp = () => setDragging(false);
+
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
     return () => {
@@ -65,20 +80,35 @@ export default function ArtifactPanel({ src, title = "Prototype" }: ArtifactPane
 
   return (
     <div
+      ref={panelRef}
       className="artifact-panel"
       style={{
         width: panelWidth,
+        // No transition while dragging — smooth animation only on collapse/expand clicks
         transition: dragging ? "none" : "width 0.22s cubic-bezier(0.22,1,0.36,1)",
         flexShrink: 0,
         position: "relative",
+        // Block pointer events on the iframe while dragging so it doesn't steal mousemove
+        userSelect: dragging ? "none" : undefined,
       }}
     >
+      {/* iframe pointer-events blocker during drag */}
+      {dragging && (
+        <div style={{
+          position: "absolute",
+          inset: 0,
+          zIndex: 10,
+          cursor: "ew-resize",
+        }} />
+      )}
+
       {/* Drag handle */}
       {!collapsed && (
         <div
           onMouseDown={onMouseDown}
           className={`proto-drag-handle${dragging ? " dragging" : ""}`}
           title="Drag to resize"
+          style={{ cursor: "ew-resize" }}
         />
       )}
 
