@@ -10,6 +10,7 @@ interface SidebarProps {
   visitedStages: Set<number>;
   onReviewStage: (index: number) => void;
   stagesV2?: StageV2Runtime[];
+  contextText?: string;
 }
 
 export default function Sidebar({
@@ -19,18 +20,29 @@ export default function Sidebar({
   visitedStages,
   onReviewStage,
   stagesV2,
+  contextText,
 }: SidebarProps) {
-  const stageList = stagesV2
-    ? stagesV2.map((s) => ({
+  // V2 stages take priority; fall back to Vela V1 stages
+  const isV2 = !!stagesV2;
+  const stageList = isV2
+    ? stagesV2!.map((s) => ({
         id: s.id,
         color: s.agent.color,
         stageTitle: s.title,
+        avatarLetter: s.agent.avatar,
       }))
     : STAGES.map((s) => ({
         id: s.id,
         color: s.color,
         stageTitle: s.stageTitle,
+        avatarLetter: s.id.charAt(0).toUpperCase(),
       }));
+
+  const defaultContext = isV2
+    ? null
+    : "You are a junior SDE in your second week at Vela, an IT asset management company. Your team is building the customer onboarding module this sprint — and you're leading the build.";
+
+  const shownContext = contextText ?? defaultContext;
 
   return (
     <div className="sidebar">
@@ -70,6 +82,14 @@ export default function Sidebar({
           );
         })}
       </div>
+      {shownContext && (
+        <div className="sidebar-section">
+          <div className="context-box">
+            <strong>Your Context</strong>
+            {shownContext}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

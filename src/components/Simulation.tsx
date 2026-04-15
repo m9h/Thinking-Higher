@@ -397,7 +397,7 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
 
           <div style={{ marginBottom: 36 }}>
             <label className="profile-label">Your icon</label>
-            <div className="icon-picker" style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
               {ICON_OPTIONS.map((icon) => (
                 <button
                   key={icon}
@@ -507,7 +507,7 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
   return (
     <>
       <div className="topbar">
-        <Link href="/" className="logo" style={{ textDecoration: "none", cursor: "pointer" }}>Think<span>Higher</span></Link>
+        <div className="logo">Think<span>Higher</span></div>
         <div className="scenario-title">Vela SDE Simulation 001 — Customer Onboarding Sprint</div>
         <StageDots currentStage={currentStage} simulationComplete={simulationComplete} />
       </div>
@@ -587,6 +587,7 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
               />
               <button className="send-btn" onClick={sendMessage} disabled={isLoading || readOnly}>Send →</button>
             </div>
+            <div className="input-hint">This is a simulation. Respond as you would in a real workplace.</div>
           </div>
         </div>
 

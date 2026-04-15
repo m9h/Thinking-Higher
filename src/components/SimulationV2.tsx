@@ -423,7 +423,7 @@ export default function SimulationV2() {
           </div>
           <div style={{ marginBottom: 36 }}>
             <label className="profile-label">Your icon</label>
-            <div className="icon-picker" style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
               {ICON_OPTIONS.map(icon => (
                 <button key={icon} onClick={() => setProfileIcon(icon)} style={{
                   width: 52, height: 52, borderRadius: 12, fontSize: 26, cursor: "pointer",
@@ -623,6 +623,7 @@ export default function SimulationV2() {
                 }} />
               <button className="send-btn" onClick={sendMessage} disabled={isLoading || readOnly}>Send →</button>
             </div>
+            <div className="input-hint">This is a simulation. Respond as you would in a real workplace.</div>
           </div>
         </div>
 
