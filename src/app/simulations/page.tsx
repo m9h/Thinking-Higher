@@ -4,7 +4,7 @@ import CatalogCard from "@/components/CatalogCard";
 const SIMULATIONS = [
   {
     id: "vela-sde",
-    href: "/simulation",
+    href: "/simulations/vela-junior-sde-001",
     title: "Junior Software Developer at Vela",
     description:
       "Sit in on Monday's team meeting, review Marcus's prototype, then walk Alex through your development approach. Practice higher-order thinking and stakeholder communication.",
