@@ -13,14 +13,19 @@ import VideoMeeting from "./VideoMeeting";
 import ComprehensionCheck from "./ComprehensionCheck";
 import ArtifactPanel from "./ArtifactPanel";
 import SituationBrief from "./SituationBrief";
+import MicButton from "./MicButton";
+import VoiceBubble from "./VoiceBubble";
+import { useSpeechInput } from "@/hooks/useSpeechInput";
+import { useSpeechOutput } from "@/hooks/useSpeechOutput";
 
 interface DisplayMessage {
   id: string;
-  type: "user" | "ai" | "system";
+  type: "user" | "ai" | "system" | "voice";
   sender: string;
   text: string;
   color: string;
   avatar: string;
+  durationSec?: number;
 }
 
 type StagePhase = "video" | "chat" | "quiz";
@@ -80,6 +85,27 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
   const [isTyping, setIsTyping] = useState(false);
   const [readOnly, setReadOnly] = useState(false);
 
+  // Speech
+  const [inputMode, setInputMode] = useState<"voice" | "type">(() =>
+    typeof window !== "undefined" ? (localStorage.getItem("inputMode") as "voice" | "type" | null) ?? "voice" : "voice"
+  );
+  const [revealedMsgIds, setRevealedMsgIds] = useState<Set<string>>(new Set());
+  const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null);
+  const recordingStartRef = useRef<number>(0);
+  const sendMessageRef = useRef<((override?: string) => void) | null>(null);
+
+  const currentPollyVoice = SCENARIO.stages[currentStage]?.agentProfile?.pollyVoice ?? "Joanna";
+  const speechOutput = useSpeechOutput(currentPollyVoice);
+  const speechInput  = useSpeechInput();
+
+  const toggleInputMode = () => {
+    const next = inputMode === "voice" ? "type" : "voice";
+    setInputMode(next);
+    localStorage.setItem("inputMode", next);
+  };
+
+  speechInput.onTranscript((t) => sendMessageRef.current?.(t));
+
   const savedMessagesRef = useRef<Record<number, DisplayMessage[]>>({});
   const savedHistoryRef = useRef<Record<number, { role: string; content: string }[]>>({});
   const allAssessmentsRef = useRef<Assessment[]>([]);
@@ -113,19 +139,26 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
     setIsLoading(true);
     setIsTyping(true);
 
+    const addOpenerMessage = (text: string) => {
+      const id = nextMsgId();
+      const now = Date.now();
+      setMessages((prev) => [
+        ...prev,
+        { id, type: "ai", sender: stage.name, text, color: stage.color, avatar: stage.avatar },
+      ]);
+      setConversationHistory([{ role: "assistant", content: text }]);
+      stageTranscriptRef.current.push({ role: "assistant", content: text, timestamp: now, responseTimeMs: null });
+      setSpeakingMsgId(id);
+      speechOutput.speak(text);
+    };
+
     try {
       const text = await callLLM({
         system: stage.systemPrompt,
         messages: [{ role: "user", content: "[Start the conversation with your opening message.]" }],
       });
-      const now = Date.now();
       setIsTyping(false);
-      setMessages((prev) => [
-        ...prev,
-        { id: nextMsgId(), type: "ai", sender: stage.name, text, color: stage.color, avatar: stage.avatar },
-      ]);
-      setConversationHistory([{ role: "assistant", content: text }]);
-      stageTranscriptRef.current.push({ role: "assistant", content: text, timestamp: now, responseTimeMs: null });
+      addOpenerMessage(text);
     } catch {
       setIsTyping(false);
       const fallbacks = [
@@ -133,17 +166,10 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
         "Hey! So I just finished the prototype — want to walk through it together?",
         "Hey — before you dive in, I want to hear how you're thinking about building this. Walk me through your approach.",
       ];
-      const text = fallbacks[stageIndex] ?? "Let's get started.";
-      const now = Date.now();
-      setMessages((prev) => [
-        ...prev,
-        { id: nextMsgId(), type: "ai", sender: stage.name, text, color: stage.color, avatar: stage.avatar },
-      ]);
-      setConversationHistory([{ role: "assistant", content: text }]);
-      stageTranscriptRef.current.push({ role: "assistant", content: text, timestamp: now, responseTimeMs: null });
+      addOpenerMessage(fallbacks[stageIndex] ?? "Let's get started.");
     }
     setIsLoading(false);
-  }, []);
+  }, [speechOutput]);
 
   const loadStage = useCallback((stageIndex: number) => {
     const stage = STAGES[stageIndex];
@@ -184,8 +210,8 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
     getAIOpener(currentStage);
   }, [currentStage, addSystemMessage, getAIOpener]);
 
-  const sendMessage = useCallback(async () => {
-    const text = inputValue.trim();
+  const sendMessage = useCallback(async (override?: string) => {
+    const text = (override ?? inputValue).trim();
     if (!text || isLoading) return;
 
     const stage = STAGES[currentStage];
@@ -194,9 +220,15 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
     const newCount = stageMessageCount + 1;
     setStageMessageCount(newCount);
 
+    speechOutput.stop();
+
+    const durationSec = inputMode === "voice"
+      ? Math.round((Date.now() - recordingStartRef.current) / 1000)
+      : undefined;
+
     setMessages((prev) => [
       ...prev,
-      { id: nextMsgId(), type: "user", sender: userName, text, color: "var(--accent)", avatar: userIcon },
+      { id: nextMsgId(), type: inputMode === "voice" ? "voice" : "user", sender: userName, text, color: "var(--accent)", avatar: userIcon, durationSec },
     ]);
     stageTranscriptRef.current.push({ role: "user", content: text, timestamp: sendTimestamp, responseTimeMs: null });
 
@@ -218,25 +250,35 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
       const responseTimeMs = Date.now() - sendTimestamp;
 
       setIsTyping(false);
+      const replyId = nextMsgId();
       setMessages((prev) => [
         ...prev,
-        { id: nextMsgId(), type: "ai", sender: stage.name, text: reply, color: stage.color, avatar: stage.avatar },
+        { id: replyId, type: "ai", sender: stage.name, text: reply, color: stage.color, avatar: stage.avatar },
       ]);
       setConversationHistory((prev) => [...prev, { role: "assistant", content: reply }]);
       allAssessmentsRef.current.push({ stage: stage.name, userMessage: text, aiReply: reply, responseTimeMs });
       stageTranscriptRef.current.push({ role: "assistant", content: reply, timestamp: Date.now(), responseTimeMs });
+      setSpeakingMsgId(replyId);
+      speechOutput.speak(reply);
 
       if (newCount >= stageDefinition.turnConfig.minTurns) setShowNextBar(true);
     } catch {
       setIsTyping(false);
+      const fallbackId = nextMsgId();
+      const fallbackText = "Let's continue this shortly.";
       setMessages((prev) => [
         ...prev,
-        { id: nextMsgId(), type: "ai", sender: stage.name, text: "Let's continue this shortly.", color: stage.color, avatar: stage.avatar },
+        { id: fallbackId, type: "ai", sender: stage.name, text: fallbackText, color: stage.color, avatar: stage.avatar },
       ]);
+      setSpeakingMsgId(fallbackId);
+      speechOutput.speak(fallbackText);
       if (newCount >= stageDefinition.turnConfig.minTurns) setShowNextBar(true);
     }
     setIsLoading(false);
-  }, [inputValue, isLoading, currentStage, stageMessageCount, conversationHistory]);
+  }, [inputValue, isLoading, currentStage, stageMessageCount, conversationHistory, speechOutput, inputMode]);
+
+  // Keep ref in sync so onTranscript can call it
+  sendMessageRef.current = sendMessage;
 
   const notifyComplete = useCallback((scores: FeedbackScores) => {
     if (!onComplete) return;
@@ -525,22 +567,68 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
           </div>
 
           <div className="messages">
-            {messages.map((msg) =>
-              msg.type === "system" ? (
+            {messages.map((msg) => {
+              if (msg.type === "system") return (
                 <div key={msg.id} style={{ display: "flex", justifyContent: "center", margin: "4px 0" }}>
                   <div className="system-bubble">{msg.text}</div>
                 </div>
-              ) : (
-                <MessageBubble
-                  key={msg.id}
-                  sender={msg.sender}
-                  text={msg.text}
-                  color={msg.color}
-                  avatarLetter={msg.avatar}
-                  isUser={msg.type === "user"}
-                />
-              )
-            )}
+              );
+              if (msg.type === "voice") return (
+                <div key={msg.id} className="message user-msg">
+                  <div className="msg-avatar" style={{ background: "var(--surface2)", fontSize: 16 }}>{msg.avatar}</div>
+                  <div className="msg-content">
+                    <div className="msg-sender" style={{ textAlign: "right" }}>{msg.sender}</div>
+                    <VoiceBubble durationSec={msg.durationSec ?? 0} />
+                  </div>
+                </div>
+              );
+              if (msg.type === "ai") {
+                const isThisSpeaking = speakingMsgId === msg.id && speechOutput.isSpeaking;
+                const isRevealed = revealedMsgIds.has(msg.id);
+                const toggleReveal = () => setRevealedMsgIds(prev => {
+                  const next = new Set(prev);
+                  next.has(msg.id) ? next.delete(msg.id) : next.add(msg.id);
+                  return next;
+                });
+                return (
+                  <div key={msg.id} className="message">
+                    <div className="msg-avatar" style={{ background: msg.color + "33", color: msg.color, fontSize: 13, fontWeight: 700 }}>{msg.avatar}</div>
+                    <div className="msg-content">
+                      <div className="msg-sender">{msg.sender}</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 28 }}>
+                        {isThisSpeaking ? (
+                          <div className="speaking-wave"><span /><span /><span /><span /><span /></div>
+                        ) : (
+                          <div style={{ display: "flex", gap: 3, alignItems: "center" }}>
+                            {[0,1,2,3,4].map(i => <span key={i} style={{ display:"block", width:3, height:3, borderRadius:"50%", background:"var(--border)" }} />)}
+                          </div>
+                        )}
+                        {inputMode === "voice" && (
+                          <button className="show-text-btn" onClick={toggleReveal}
+                            disabled={isThisSpeaking}
+                            style={{ color: isRevealed ? "var(--accent)" : undefined, opacity: isThisSpeaking ? 0.35 : 1, cursor: isThisSpeaking ? "default" : "pointer" }}>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              {isRevealed
+                                ? <><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7"/><circle cx="12" cy="12" r="3"/></>
+                                : <><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></>
+                              }
+                            </svg>
+                            {isRevealed ? "Hide" : "Show"}
+                          </button>
+                        )}
+                      </div>
+                      {(inputMode === "type" || isRevealed) && (
+                        <div className="msg-bubble ai-bubble" style={{ marginTop: 6 }}>{msg.text}</div>
+                      )}
+                    </div>
+                  </div>
+                );
+              }
+              return (
+                <MessageBubble key={msg.id} sender={msg.sender} text={msg.text}
+                  color={msg.color} avatarLetter={msg.avatar} isUser={true} />
+              );
+            })}
             {isTyping && <TypingIndicator color={stage.color} avatar={stage.avatar} name={stage.name} />}
             <div ref={messagesEndRef} />
           </div>
@@ -568,27 +656,61 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
             </div>
           )}
 
-          <div className="input-area">
-            <div className="input-row">
-              <textarea
-                ref={inputRef}
-                className="input-box"
-                placeholder={readOnly ? "Read-only — simulation complete" : "Type your response..."}
-                rows={1}
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyDown={handleKey}
-                disabled={isLoading || readOnly}
-                onInput={(e) => {
-                  const el = e.target as HTMLTextAreaElement;
-                  el.style.height = "auto";
-                  el.style.height = Math.min(el.scrollHeight, 120) + "px";
+          {inputMode === "voice" ? (
+            <div className="voice-input-area">
+              {speechInput.interimText && (
+                <div className="interim-pill">{speechInput.interimText}</div>
+              )}
+              <MicButton
+                state={speechInput.state}
+                onClick={() => {
+                  if (speechInput.state === "idle") {
+                    recordingStartRef.current = Date.now();
+                    speechInput.start();
+                  } else {
+                    speechInput.stop();
+                  }
                 }}
+                disabled={isLoading || readOnly}
               />
-              <button className="send-btn" onClick={sendMessage} disabled={isLoading || readOnly}>Send →</button>
+              <button className="mode-toggle" onClick={toggleInputMode} title="Switch to typing" aria-label="Switch to typing">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="2" y="6" width="20" height="12" rx="2"/>
+                  <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/>
+                </svg>
+              </button>
             </div>
-            <div className="input-hint">This is a simulation. Respond as you would in a real workplace.</div>
-          </div>
+          ) : (
+            <div className="input-area">
+              <div className="input-row">
+                <textarea
+                  ref={inputRef}
+                  className="input-box"
+                  placeholder={readOnly ? "Read-only — simulation complete" : "Type your response..."}
+                  rows={1}
+                  value={inputValue}
+                  onChange={(e) => setInputValue(e.target.value)}
+                  onKeyDown={handleKey}
+                  disabled={isLoading || readOnly}
+                  onInput={(e) => {
+                    const el = e.target as HTMLTextAreaElement;
+                    el.style.height = "auto";
+                    el.style.height = Math.min(el.scrollHeight, 120) + "px";
+                  }}
+                />
+                <button className="send-btn" onClick={() => sendMessage()} disabled={isLoading || readOnly}>Send →</button>
+              </div>
+              <button className="mode-toggle" onClick={toggleInputMode} title="Switch to voice" aria-label="Switch to voice"
+                style={{ position: "static", marginTop: 8 }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="9" y="2" width="6" height="12" rx="3"/>
+                  <path d="M5 10a7 7 0 0 0 14 0"/>
+                  <line x1="12" y1="20" x2="12" y2="23"/>
+                  <line x1="9" y1="23" x2="15" y2="23"/>
+                </svg>
+              </button>
+            </div>
+          )}
         </div>
 
         {hasArtifact && (

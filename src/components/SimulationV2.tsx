@@ -12,16 +12,21 @@ import ArtifactPanel from "./ArtifactPanel";
 import SituationBrief from "./SituationBrief";
 import ComprehensionCheck from "./ComprehensionCheck";
 import VideoMeetingRidgeline from "./VideoMeetingRidgeline";
+import MicButton from "./MicButton";
+import VoiceBubble from "./VoiceBubble";
+import { useSpeechInput } from "@/hooks/useSpeechInput";
+import { useSpeechOutput } from "@/hooks/useSpeechOutput";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface DisplayMessage {
   id: string;
-  type: "user" | "ai" | "system";
+  type: "user" | "ai" | "system" | "voice";
   sender: string;
   text: string;
   color: string;
   avatar: string;
+  durationSec?: number;   // only for type "voice"
 }
 
 type StagePhase = "video" | "chat" | "quiz";
@@ -87,6 +92,28 @@ export default function SimulationV2() {
     phase: "scripted_probes",
   });
 
+  // Speech
+  const [inputMode, setInputMode] = useState<"voice" | "type">(() =>
+    typeof window !== "undefined" ? (localStorage.getItem("inputMode") as "voice" | "type" | null) ?? "voice" : "voice"
+  );
+  const [revealedMsgIds, setRevealedMsgIds] = useState<Set<string>>(new Set());
+  const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null);
+  const recordingStartRef = useRef<number>(0);
+
+  const currentPollyVoice = stages[currentStage]?.agent?.pollyVoice ?? "Joanna";
+  const speechOutput = useSpeechOutput(currentPollyVoice);
+  const speechInput  = useSpeechInput();
+
+  const toggleInputMode = () => {
+    const next = inputMode === "voice" ? "type" : "voice";
+    setInputMode(next);
+    localStorage.setItem("inputMode", next);
+  };
+
+  // Wire mic transcript → sendMessage (ref avoids declaration order issue)
+  const sendMessageRef = useRef<((override?: string) => void) | null>(null);
+  speechInput.onTranscript((t) => sendMessageRef.current?.(t));
+
   // Refs
   const savedMessagesRef = useRef<Record<number, DisplayMessage[]>>({});
   const savedHistoryRef = useRef<Record<number, { role: string; content: string }[]>>({});
@@ -104,13 +131,17 @@ export default function SimulationV2() {
 
   const addAIMessage = useCallback((text: string, stageIndex: number) => {
     const stage = stages[stageIndex];
+    const id = nextMsgId();
     setMessages(prev => [...prev, {
-      id: nextMsgId(), type: "ai", sender: stage.agent.name,
+      id, type: "ai", sender: stage.agent.name,
       text, color: stage.agent.color, avatar: stage.agent.avatar,
     }]);
     setConversationHistory(prev => [...prev, { role: "assistant", content: text }]);
     allMessagesRef.current.push({ stage: stage.id, role: "assistant", text });
-  }, [stages]);
+    // Auto-speak in voice mode
+    setSpeakingMsgId(id);
+    speechOutput.speak(text);
+  }, [stages, speechOutput]);
 
   const addSystemMessage = useCallback((text: string) => {
     setMessages(prev => [...prev, {
@@ -267,8 +298,8 @@ export default function SimulationV2() {
 
   // ── Standard message send ────────────────────────────────────────────────────
 
-  const sendMessage = useCallback(async () => {
-    const text = inputValue.trim();
+  const sendMessage = useCallback(async (override?: string) => {
+    const text = (override ?? inputValue).trim();
     if (!text || isLoading || readOnly) return;
 
     const stage = stages[currentStage];
@@ -276,11 +307,20 @@ export default function SimulationV2() {
     const newCount = stageMessageCount + 1;
     setStageMessageCount(newCount);
 
+    // Stop any ongoing AI speech when user sends a message
+    speechOutput.stop();
+
+    const durationSec = inputMode === "voice"
+      ? Math.round((Date.now() - recordingStartRef.current) / 1000)
+      : undefined;
+
     const userMsg: DisplayMessage = {
-      id: nextMsgId(), type: "user",
+      id: nextMsgId(),
+      type: inputMode === "voice" ? "voice" : "user",
       sender: userProfile?.name ?? "You",
       text, color: "var(--accent)",
       avatar: userProfile?.icon ?? "🧑‍💻",
+      durationSec,
     };
     setMessages(prev => [...prev, userMsg]);
     allMessagesRef.current.push({ stage: stage.id, role: "user", text });
@@ -311,7 +351,10 @@ export default function SimulationV2() {
       if (newCount >= stage.turnConfig.minTurns) setShowNextBar(true);
     }
   }, [inputValue, isLoading, readOnly, currentStage, stageMessageCount, conversationHistory,
-    stages, userProfile, directorState, handleDirectorActorMessage, addAIMessage]);
+    stages, userProfile, directorState, handleDirectorActorMessage, addAIMessage, speechOutput, inputMode]);
+
+  // Keep ref in sync so onTranscript can call it
+  sendMessageRef.current = sendMessage;
 
   // ── Stage advance ────────────────────────────────────────────────────────────
 
@@ -577,16 +620,68 @@ export default function SimulationV2() {
           </div>
 
           <div className="messages">
-            {messages.map(msg =>
-              msg.type === "system" ? (
+            {messages.map(msg => {
+              if (msg.type === "system") return (
                 <div key={msg.id} style={{ display: "flex", justifyContent: "center", margin: "4px 0" }}>
                   <div className="system-bubble">{msg.text}</div>
                 </div>
-              ) : (
+              );
+              if (msg.type === "voice") return (
+                <div key={msg.id} className="message user-msg">
+                  <div className="msg-avatar" style={{ background: "var(--surface2)", fontSize: 16 }}>{msg.avatar}</div>
+                  <div className="msg-content">
+                    <div className="msg-sender" style={{ textAlign: "right" }}>{msg.sender}</div>
+                    <VoiceBubble durationSec={msg.durationSec ?? 0} />
+                  </div>
+                </div>
+              );
+              if (msg.type === "ai") {
+                const isThisSpeaking = speakingMsgId === msg.id && speechOutput.isSpeaking;
+                const isRevealed = revealedMsgIds.has(msg.id);
+                const toggleReveal = () => setRevealedMsgIds(prev => {
+                  const next = new Set(prev);
+                  next.has(msg.id) ? next.delete(msg.id) : next.add(msg.id);
+                  return next;
+                });
+                return (
+                  <div key={msg.id} className="message">
+                    <div className="msg-avatar" style={{ background: msg.color + "33", color: msg.color, fontSize: 13, fontWeight: 700 }}>{msg.avatar}</div>
+                    <div className="msg-content">
+                      <div className="msg-sender">{msg.sender}</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 28 }}>
+                        {isThisSpeaking ? (
+                          <div className="speaking-wave"><span /><span /><span /><span /><span /></div>
+                        ) : (
+                          <div style={{ display: "flex", gap: 3, alignItems: "center" }}>
+                            {[0,1,2,3,4].map(i => <span key={i} style={{ display:"block", width:3, height:3, borderRadius:"50%", background:"var(--border)" }} />)}
+                          </div>
+                        )}
+                        {inputMode === "voice" && (
+                          <button className="show-text-btn" onClick={toggleReveal}
+                            disabled={isThisSpeaking}
+                            style={{ color: isRevealed ? "var(--accent)" : undefined, opacity: isThisSpeaking ? 0.35 : 1, cursor: isThisSpeaking ? "default" : "pointer" }}>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              {isRevealed
+                                ? <><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7"/><circle cx="12" cy="12" r="3"/></>
+                                : <><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></>
+                              }
+                            </svg>
+                            {isRevealed ? "Hide" : "Show"}
+                          </button>
+                        )}
+                      </div>
+                      {(inputMode === "type" || isRevealed) && (
+                        <div className="msg-bubble ai-bubble" style={{ marginTop: 6 }}>{msg.text}</div>
+                      )}
+                    </div>
+                  </div>
+                );
+              }
+              return (
                 <MessageBubble key={msg.id} sender={msg.sender} text={msg.text}
-                  color={msg.color} avatarLetter={msg.avatar} isUser={msg.type === "user"} />
-              )
-            )}
+                  color={msg.color} avatarLetter={msg.avatar} isUser={true} />
+              );
+            })}
             {isTyping && <TypingIndicator color={stage.agent.color} avatar={stage.agent.avatar} name={stage.agent.name} />}
             <div ref={messagesEndRef} />
           </div>
@@ -610,21 +705,55 @@ export default function SimulationV2() {
             </div>
           )}
 
-          <div className="input-area">
-            <div className="input-row">
-              <textarea ref={inputRef} className="input-box" rows={1}
-                placeholder={readOnly ? "Read-only — simulation complete" : "Type your response..."}
-                value={inputValue} onChange={e => setInputValue(e.target.value)}
-                onKeyDown={handleKey} disabled={isLoading || readOnly}
-                onInput={e => {
-                  const el = e.target as HTMLTextAreaElement;
-                  el.style.height = "auto";
-                  el.style.height = Math.min(el.scrollHeight, 120) + "px";
-                }} />
-              <button className="send-btn" onClick={sendMessage} disabled={isLoading || readOnly}>Send →</button>
+          {inputMode === "voice" ? (
+            <div className="voice-input-area">
+              {speechInput.interimText && (
+                <div className="interim-pill">{speechInput.interimText}</div>
+              )}
+              <MicButton
+                state={speechInput.state}
+                onClick={() => {
+                  if (speechInput.state === "idle") {
+                    recordingStartRef.current = Date.now();
+                    speechInput.start();
+                  } else {
+                    speechInput.stop();
+                  }
+                }}
+                disabled={isLoading || readOnly}
+              />
+              <button className="mode-toggle" onClick={toggleInputMode} title="Switch to typing" aria-label="Switch to typing">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="2" y="6" width="20" height="12" rx="2"/>
+                  <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8"/>
+                </svg>
+              </button>
             </div>
-            <div className="input-hint">This is a simulation. Respond as you would in a real workplace.</div>
-          </div>
+          ) : (
+            <div className="input-area">
+              <div className="input-row">
+                <textarea ref={inputRef} className="input-box" rows={1}
+                  placeholder={readOnly ? "Read-only — simulation complete" : "Type your response..."}
+                  value={inputValue} onChange={e => setInputValue(e.target.value)}
+                  onKeyDown={handleKey} disabled={isLoading || readOnly}
+                  onInput={e => {
+                    const el = e.target as HTMLTextAreaElement;
+                    el.style.height = "auto";
+                    el.style.height = Math.min(el.scrollHeight, 120) + "px";
+                  }} />
+                <button className="send-btn" onClick={() => sendMessage()} disabled={isLoading || readOnly}>Send →</button>
+              </div>
+              <button className="mode-toggle" onClick={toggleInputMode} title="Switch to voice" aria-label="Switch to voice"
+                style={{ position: "static", marginTop: 8 }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="9" y="2" width="6" height="12" rx="3"/>
+                  <path d="M5 10a7 7 0 0 0 14 0"/>
+                  <line x1="12" y1="20" x2="12" y2="23"/>
+                  <line x1="9" y1="23" x2="15" y2="23"/>
+                </svg>
+              </button>
+            </div>
+          )}
         </div>
 
         {hasArtifact && (
