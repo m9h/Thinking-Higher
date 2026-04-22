@@ -37,6 +37,8 @@ export function createPostgresDB(): DB {
         completedAt: session.completedAt ? new Date(session.completedAt) : null,
         status: session.status,
         metadata: (session.metadata ?? null) as unknown as Record<string, unknown>,
+        userEmail: session.userEmail ?? null,
+        userName: session.userName ?? null,
       });
     },
 
@@ -58,6 +60,8 @@ export function createPostgresDB(): DB {
         completedAt: row.completedAt ? row.completedAt.getTime() : null,
         status: row.status as Session["status"],
         metadata: (row.metadata as ParticipantMetadata) ?? null,
+        userEmail: row.userEmail ?? null,
+        userName: row.userName ?? null,
       };
     },
 

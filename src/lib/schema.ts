@@ -41,6 +41,8 @@ export const experimentSessions = pgTable("experiment_sessions", {
   completedAt: timestamp("completed_at"),
   status: text("status").notNull().default("active"),
   metadata: jsonb("metadata"),
+  userEmail: text("user_email"),
+  userName: text("user_name"),
 });
 
 export const trials = pgTable("trials", {

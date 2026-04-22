@@ -238,6 +238,8 @@ export interface Session {
   completedAt: number | null;
   status: "active" | "completed" | "abandoned";
   metadata: ParticipantMetadata | null;
+  userEmail: string | null;
+  userName: string | null;
 }
 
 export interface StageTranscript {

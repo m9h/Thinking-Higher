@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import type { Session, FeedbackScores, SurveyResponse, ProfileData, TaskResult } from "@/lib/types";
 
@@ -12,6 +13,7 @@ export async function POST(req: NextRequest) {
 
   if (action === "createSession") {
     const { participantId, scenarioId, metadata } = body;
+    const authSession = await auth();
     const session: Session = {
       id: generateId(),
       participantId: participantId || metadata?.participantId || generateId(),
@@ -20,6 +22,8 @@ export async function POST(req: NextRequest) {
       completedAt: null,
       status: "active",
       metadata: metadata || null,
+      userEmail: authSession?.user?.email ?? null,
+      userName: authSession?.user?.name ?? null,
     };
     await db.saveSession(session);
     return NextResponse.json({ session });
