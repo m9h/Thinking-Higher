@@ -21,84 +21,80 @@ export interface DB {
   getTaskResult(sessionId: string, stageId: string): Promise<TaskResult | null>;
 }
 
-// --- In-Memory Store (server-side, per-process) ---
-// Suitable for dev/preview. Swap for Vercel Postgres in production.
+// --- DB Factory ---
+// Uses Postgres when POSTGRES_URL is set (production/preview on Vercel),
+// falls back to in-memory Maps for local dev without a database.
 
-const sessions = new Map<string, Session>();
-const transcripts = new Map<string, StageTranscript>();
-const assessments = new Map<string, SessionAssessment>();
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const profiles = new Map<string, any>();
-const surveys = new Map<string, SurveyResponse[]>();
-const participantProfiles = new Map<string, ProfileData>();
-const taskResults = new Map<string, TaskResult>();
+function createInMemoryDB(): DB {
+  const sessions = new Map<string, Session>();
+  const transcripts = new Map<string, StageTranscript>();
+  const assessments = new Map<string, SessionAssessment>();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const profiles = new Map<string, any>();
+  const surveys = new Map<string, SurveyResponse[]>();
+  const participantProfiles = new Map<string, ProfileData>();
+  const taskResults = new Map<string, TaskResult>();
 
-function transcriptKey(sessionId: string, stageId: string) {
-  return `${sessionId}:${stageId}`;
+  function transcriptKey(sessionId: string, stageId: string) {
+    return `${sessionId}:${stageId}`;
+  }
+
+  return {
+    async saveSession(session) {
+      sessions.set(session.id, { ...session });
+    },
+    async getSession(sessionId) {
+      return sessions.get(sessionId) ?? null;
+    },
+    async updateSession(sessionId, updates) {
+      const existing = sessions.get(sessionId);
+      if (existing) {
+        sessions.set(sessionId, { ...existing, ...updates });
+      }
+    },
+    async saveTranscript(sessionId, stageId, entries) {
+      transcripts.set(transcriptKey(sessionId, stageId), {
+        sessionId, stageId, entries: [...entries],
+      });
+    },
+    async getTranscript(sessionId, stageId) {
+      return transcripts.get(transcriptKey(sessionId, stageId)) ?? null;
+    },
+    async saveAssessment(sessionId, scores, responseTimesMs) {
+      assessments.set(sessionId, {
+        sessionId, scores, responseTimesMs, completedAt: Date.now(),
+      });
+    },
+    async getAssessment(sessionId) {
+      return assessments.get(sessionId) ?? null;
+    },
+    async saveProfile(sessionId, profile) {
+      profiles.set(sessionId, profile);
+    },
+    async getProfile(sessionId) {
+      return profiles.get(sessionId) ?? null;
+    },
+    async saveSurvey(sessionId, stageId, responses) {
+      surveys.set(`${sessionId}:${stageId}`, [...responses]);
+    },
+    async saveParticipantProfile(sessionId, profile) {
+      participantProfiles.set(sessionId, { ...profile });
+    },
+    async saveTaskResult(result) {
+      taskResults.set(transcriptKey(result.sessionId, result.stageId), { ...result });
+    },
+    async getTaskResult(sessionId, stageId) {
+      return taskResults.get(transcriptKey(sessionId, stageId)) ?? null;
+    },
+  };
 }
 
-export const db: DB = {
-  async saveSession(session) {
-    sessions.set(session.id, { ...session });
-  },
+function createDB(): DB {
+  if (process.env.POSTGRES_URL) {
+    const { createPostgresDB } = require("./db-postgres");
+    return createPostgresDB();
+  }
+  return createInMemoryDB();
+}
 
-  async getSession(sessionId) {
-    return sessions.get(sessionId) ?? null;
-  },
-
-  async updateSession(sessionId, updates) {
-    const existing = sessions.get(sessionId);
-    if (existing) {
-      sessions.set(sessionId, { ...existing, ...updates });
-    }
-  },
-
-  async saveTranscript(sessionId, stageId, entries) {
-    transcripts.set(transcriptKey(sessionId, stageId), {
-      sessionId,
-      stageId,
-      entries: [...entries],
-    });
-  },
-
-  async getTranscript(sessionId, stageId) {
-    return transcripts.get(transcriptKey(sessionId, stageId)) ?? null;
-  },
-
-  async saveAssessment(sessionId, scores, responseTimesMs) {
-    assessments.set(sessionId, {
-      sessionId,
-      scores,
-      responseTimesMs,
-      completedAt: Date.now(),
-    });
-  },
-
-  async getAssessment(sessionId) {
-    return assessments.get(sessionId) ?? null;
-  },
-
-  async saveProfile(sessionId, profile) {
-    profiles.set(sessionId, profile);
-  },
-
-  async getProfile(sessionId) {
-    return profiles.get(sessionId) ?? null;
-  },
-
-  async saveSurvey(sessionId, stageId, responses) {
-    surveys.set(`${sessionId}:${stageId}`, [...responses]);
-  },
-
-  async saveParticipantProfile(sessionId, profile) {
-    participantProfiles.set(sessionId, { ...profile });
-  },
-
-  async saveTaskResult(result) {
-    taskResults.set(transcriptKey(result.sessionId, result.stageId), { ...result });
-  },
-
-  async getTaskResult(sessionId, stageId) {
-    return taskResults.get(transcriptKey(sessionId, stageId)) ?? null;
-  },
-};
+export const db: DB = createDB();

@@ -10,3 +10,4 @@ dist/
 .claude/
 .vercel
 Design Docs
+.env*.local

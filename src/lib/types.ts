@@ -16,6 +16,7 @@ export interface TurnConfig {
   minTurns: number;
   maxTurns: number;
   wrapUpSignalTurn: number;
+  maxCharsPerMessage?: number;
 }
 
 export interface SituationParticipant {

@@ -267,9 +267,13 @@ export default function SimulationV2() {
 
   // ── Standard message send ────────────────────────────────────────────────────
 
+  const charLimit = stages[currentStage]?.turnConfig.maxCharsPerMessage ?? 500;
+  const charsRemaining = charLimit - inputValue.length;
+  const overLimit = charsRemaining < 0;
+
   const sendMessage = useCallback(async () => {
     const text = inputValue.trim();
-    if (!text || isLoading || readOnly) return;
+    if (!text || isLoading || readOnly || text.length > charLimit) return;
 
     const stage = stages[currentStage];
     setInputValue("");
@@ -288,16 +292,23 @@ export default function SimulationV2() {
     const newHistory = [...conversationHistory, { role: "user", content: text }];
     setConversationHistory(newHistory);
 
+    const atMaxTurns = newCount >= stage.turnConfig.maxTurns;
+
     if (stage.conversationMode === "director-actor") {
       await handleDirectorActorMessage(text, currentStage, directorState, conversationHistory);
-      // Show next bar after wrapUpSignalTurn
-      if (newCount >= stage.turnConfig.wrapUpSignalTurn) setShowNextBar(true);
+      if (atMaxTurns) {
+        setReadOnly(true);
+        setShowNextBar(true);
+        addSystemMessage("Conversation complete — move on to the next stage.");
+      } else if (newCount >= stage.turnConfig.wrapUpSignalTurn) {
+        setShowNextBar(true);
+      }
     } else {
       // Standard LLM-only mode
       setIsLoading(true); setIsTyping(true);
-      const isLast = newCount >= stage.turnConfig.wrapUpSignalTurn;
       const systemPrompt = stage.agent.personaPrompt +
-        (isLast ? " Naturally signal the conversation is wrapping up." : "");
+        (atMaxTurns ? " This is the final exchange. Wrap up the conversation naturally with a closing remark." :
+         newCount >= stage.turnConfig.wrapUpSignalTurn ? " Naturally signal the conversation is wrapping up." : "");
       const recentHistory = newHistory.slice(-6);
       try {
         const reply = await callLLM({ system: systemPrompt, messages: recentHistory });
@@ -308,7 +319,13 @@ export default function SimulationV2() {
         addAIMessage("Let's continue in a moment.", currentStage);
       }
       setIsLoading(false);
-      if (newCount >= stage.turnConfig.minTurns) setShowNextBar(true);
+      if (atMaxTurns) {
+        setReadOnly(true);
+        setShowNextBar(true);
+        addSystemMessage("Conversation complete — move on to the next stage.");
+      } else if (newCount >= stage.turnConfig.minTurns) {
+        setShowNextBar(true);
+      }
     }
   }, [inputValue, isLoading, readOnly, currentStage, stageMessageCount, conversationHistory,
     stages, userProfile, directorState, handleDirectorActorMessage, addAIMessage]);
@@ -621,9 +638,16 @@ export default function SimulationV2() {
                   el.style.height = "auto";
                   el.style.height = Math.min(el.scrollHeight, 120) + "px";
                 }} />
-              <button className="send-btn" onClick={sendMessage} disabled={isLoading || readOnly}>Send →</button>
+              <button className="send-btn" onClick={sendMessage} disabled={isLoading || readOnly || overLimit}>Send →</button>
             </div>
-            <div className="input-hint">This is a simulation. Respond as you would in a real workplace.</div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div className="input-hint">This is a simulation. Respond as you would in a real workplace.</div>
+              {!readOnly && inputValue.length > charLimit * 0.8 && (
+                <div style={{ fontSize: "10px", fontFamily: "'IBM Plex Mono', monospace", color: overLimit ? "#e55" : "var(--muted)", whiteSpace: "nowrap", marginLeft: 8 }}>
+                  {charsRemaining}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 

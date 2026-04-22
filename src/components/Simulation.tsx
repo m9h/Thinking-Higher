@@ -184,9 +184,13 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
     getAIOpener(currentStage);
   }, [currentStage, addSystemMessage, getAIOpener]);
 
+  const charLimit = SCENARIO.stages[currentStage]?.turnConfig.maxCharsPerMessage ?? 500;
+  const charsRemaining = charLimit - inputValue.length;
+  const overLimit = charsRemaining < 0;
+
   const sendMessage = useCallback(async () => {
     const text = inputValue.trim();
-    if (!text || isLoading) return;
+    if (!text || isLoading || text.length > charLimit) return;
 
     const stage = STAGES[currentStage];
     const sendTimestamp = Date.now();
@@ -202,17 +206,23 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
 
     const newHistory = [...conversationHistory, { role: "user", content: text }];
     setConversationHistory(newHistory);
+
+    const stageDefinition = SCENARIO.stages[currentStage];
+
+    // Enforce max turns — after the user's last allowed message, get one final AI reply then lock
+    const atMaxTurns = newCount >= stageDefinition.turnConfig.maxTurns;
+
     setIsLoading(true);
     setIsTyping(true);
 
     const recentHistory = newHistory.slice(-6);
-    const stageDefinition = SCENARIO.stages[currentStage];
 
     try {
-      const isLastExchange = newCount >= stageDefinition.turnConfig.wrapUpSignalTurn;
+      const isLastExchange = atMaxTurns || newCount >= stageDefinition.turnConfig.wrapUpSignalTurn;
       const systemPrompt =
         stage.systemPrompt +
-        (isLastExchange ? " After this message, naturally signal the conversation is wrapping up." : "");
+        (atMaxTurns ? " This is the final exchange. Wrap up the conversation naturally with a closing remark." :
+         isLastExchange ? " After this message, naturally signal the conversation is wrapping up." : "");
 
       const reply = await callLLM({ system: systemPrompt, messages: recentHistory });
       const responseTimeMs = Date.now() - sendTimestamp;
@@ -226,14 +236,26 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
       allAssessmentsRef.current.push({ stage: stage.name, userMessage: text, aiReply: reply, responseTimeMs });
       stageTranscriptRef.current.push({ role: "assistant", content: reply, timestamp: Date.now(), responseTimeMs });
 
-      if (newCount >= stageDefinition.turnConfig.minTurns) setShowNextBar(true);
+      if (atMaxTurns) {
+        setReadOnly(true);
+        setShowNextBar(true);
+        addSystemMessage("Conversation complete — move on to the next stage.");
+      } else if (newCount >= stageDefinition.turnConfig.minTurns) {
+        setShowNextBar(true);
+      }
     } catch {
       setIsTyping(false);
       setMessages((prev) => [
         ...prev,
         { id: nextMsgId(), type: "ai", sender: stage.name, text: "Let's continue this shortly.", color: stage.color, avatar: stage.avatar },
       ]);
-      if (newCount >= stageDefinition.turnConfig.minTurns) setShowNextBar(true);
+      if (atMaxTurns) {
+        setReadOnly(true);
+        setShowNextBar(true);
+        addSystemMessage("Conversation complete — move on to the next stage.");
+      } else if (newCount >= stageDefinition.turnConfig.minTurns) {
+        setShowNextBar(true);
+      }
     }
     setIsLoading(false);
   }, [inputValue, isLoading, currentStage, stageMessageCount, conversationHistory]);
@@ -585,9 +607,16 @@ export default function Simulation({ onComplete }: SimulationProps = {}) {
                   el.style.height = Math.min(el.scrollHeight, 120) + "px";
                 }}
               />
-              <button className="send-btn" onClick={sendMessage} disabled={isLoading || readOnly}>Send →</button>
+              <button className="send-btn" onClick={sendMessage} disabled={isLoading || readOnly || overLimit}>Send →</button>
             </div>
-            <div className="input-hint">This is a simulation. Respond as you would in a real workplace.</div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div className="input-hint">This is a simulation. Respond as you would in a real workplace.</div>
+              {!readOnly && inputValue.length > charLimit * 0.8 && (
+                <div style={{ fontSize: "10px", fontFamily: "'IBM Plex Mono', monospace", color: overLimit ? "#e55" : "var(--muted)", whiteSpace: "nowrap", marginLeft: 8 }}>
+                  {charsRemaining}
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
