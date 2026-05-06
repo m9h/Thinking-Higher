@@ -36,23 +36,33 @@ export async function POST(req: NextRequest) {
       ];
     }
 
-    const geminiRes = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: system }] },
-        contents,
-        generationConfig: { maxOutputTokens: maxTokens },
-      }),
+    const payload = JSON.stringify({
+      systemInstruction: { parts: [{ text: system }] },
+      contents,
+      generationConfig: { maxOutputTokens: maxTokens },
     });
 
-    const data = await geminiRes.json();
+    // Retry up to 3 times on 503 with exponential backoff (1s, 2s, 4s)
+    let geminiRes: Response | null = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let data: any = {};
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) await new Promise(r => setTimeout(r, 1000 * 2 ** (attempt - 1)));
+      geminiRes = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+      });
+      data = await geminiRes.json();
+      if (geminiRes.status !== 503) break;
+      console.warn(`Gemini 503 on attempt ${attempt + 1}, retrying…`);
+    }
 
-    if (!geminiRes.ok) {
+    if (!geminiRes!.ok) {
       console.error("Gemini error:", JSON.stringify(data));
       return NextResponse.json(
-        { error: data.error?.message || "Gemini API error" },
-        { status: geminiRes.status }
+        { error: (data.error as { message?: string })?.message || "Gemini API error" },
+        { status: geminiRes!.status }
       );
     }
 

@@ -89,6 +89,7 @@ export interface AgentProfile {
   color: string;
   personaPrompt: string;
   assessmentRubric: string;
+  pollyVoice?: string;
   // Deliberate Lab-compatible fields
   agentPersonaType: AgentPersonaType;
   description: string;
@@ -274,6 +275,7 @@ export interface AgentDefinition {
   color: string;
   personaPrompt: string;
   assessmentRubric: string;
+  pollyVoice?: string;
   knowledgeConstraints?: KnowledgeConstraints;
 }
 
