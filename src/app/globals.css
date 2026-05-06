@@ -582,6 +582,8 @@ body {
   align-items: center;
   justify-content: center;
   padding: 24px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .start-card { max-width: 560px; width: 100%; }
