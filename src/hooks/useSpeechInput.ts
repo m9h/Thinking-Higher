@@ -21,8 +21,6 @@ export function useSpeechInput(): UseSpeechInputReturn {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef        = useRef<Blob[]>([]);
   const callbackRef      = useRef<((text: string) => void) | null>(null);
-  const silenceTimerRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const animFrameRef     = useRef<number | null>(null);
 
   const supported = typeof window !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
 
@@ -31,8 +29,6 @@ export function useSpeechInput(): UseSpeechInputReturn {
   }, []);
 
   const stopRecording = useCallback(() => {
-    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-    if (animFrameRef.current)    cancelAnimationFrame(animFrameRef.current);
     if (mediaRecorderRef.current?.state === "recording") {
       mediaRecorderRef.current.stop();
     }
@@ -45,52 +41,51 @@ export function useSpeechInput(): UseSpeechInputReturn {
 
     let stream: MediaStream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Use constraints to heavily prefer a local communications microphone over Continuity Camera
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        }
+      });
     } catch {
-      setInterimText("");
+      setInterimText("Microphone access denied");
+      setTimeout(() => setInterimText(""), 3000);
       return;
     }
 
-    const ctx      = new AudioContext();
-    const source   = ctx.createMediaStreamSource(stream);
-    const analyser = ctx.createAnalyser();
-    analyser.fftSize = 512;
-    source.connect(analyser);
-    const dataArr = new Uint8Array(analyser.frequencyBinCount);
-
-    const resetSilenceTimer = () => {
-      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-      silenceTimerRef.current = setTimeout(() => stopRecording(), 1500);
-    };
-
-    const checkLevel = () => {
-      analyser.getByteFrequencyData(dataArr);
-      const avg = dataArr.reduce((a, b) => a + b, 0) / dataArr.length;
-      if (avg > 8) resetSilenceTimer();
-      animFrameRef.current = requestAnimationFrame(checkLevel);
-    };
-    resetSilenceTimer();
-    animFrameRef.current = requestAnimationFrame(checkLevel);
-
-    const mr = new MediaRecorder(stream);
+    // Explicitly try to record in webm if supported (Chrome/Firefox/New Safari), else default (Safari)
+    const options = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? { mimeType: "audio/webm;codecs=opus" } :
+                    MediaRecorder.isTypeSupported("audio/webm") ? { mimeType: "audio/webm" } : {};
+    
+    const mr = new MediaRecorder(stream, options);
     mediaRecorderRef.current = mr;
     mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
 
     mr.onstop = async () => {
       stream.getTracks().forEach((t) => t.stop());
-      ctx.close();
-      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
 
       // Return to idle immediately — STT happens silently in background
       setState("idle");
-      setInterimText("");
+      setInterimText("Transcribing...");
       processingRef.current = true;
       try {
-        const blob       = new Blob(chunksRef.current, { type: "audio/webm" });
+        const mimeType = mr.mimeType || "audio/webm";
+        const blob       = new Blob(chunksRef.current, { type: mimeType });
         const transcript = await fetchSTTTranscript(blob);
-        if (transcript && callbackRef.current) callbackRef.current(transcript);
+        
+        if (transcript && callbackRef.current) {
+          callbackRef.current(transcript);
+          setInterimText("");
+        } else if (!transcript) {
+           setInterimText("Could not hear anything.");
+           setTimeout(() => setInterimText(""), 3000);
+        }
       } catch (e) {
         console.error("STT error:", e);
+        setInterimText("Error: could not transcribe");
+        setTimeout(() => setInterimText(""), 3000);
       } finally {
         processingRef.current = false;
       }
@@ -98,7 +93,7 @@ export function useSpeechInput(): UseSpeechInputReturn {
 
     mr.start();
     setState("listening");
-  }, [state, stopRecording]);
+  }, [state]);
 
   return { state, interimText, supported, start, stop: stopRecording, onTranscript };
 }

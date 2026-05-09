@@ -2,15 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const maxDuration = 30;
 
-const STT_API_KEY = process.env.GOOGLE_STT_API_KEY || "";
-
-// Google Cloud Speech-to-Text v1 — works with API key, no recognizer setup needed
-const STT_URL = `https://speech.googleapis.com/v1/speech:recognize?key=${STT_API_KEY}`;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash"; // Flash is fast and excellent at audio
 
 export async function POST(req: NextRequest) {
   try {
-    if (!STT_API_KEY) {
-      return NextResponse.json({ error: "GOOGLE_STT_API_KEY not configured" }, { status: 500 });
+    if (!GEMINI_API_KEY) {
+      return NextResponse.json({ error: "GEMINI_API_KEY not configured" }, { status: 500 });
     }
 
     const formData = await req.formData();
@@ -21,41 +19,38 @@ export async function POST(req: NextRequest) {
     }
 
     const audioBytes = Buffer.from(await audioFile.arrayBuffer()).toString("base64");
+    const mimeType = audioFile.type || "audio/webm";
 
-    const sttBody = {
-      config: {
-        encoding: "WEBM_OPUS",
-        sampleRateHertz: 48000,
-        languageCode: "en-US",
-        model: "latest_long",
-        enableAutomaticPunctuation: true,
-      },
-      audio: { content: audioBytes },
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+    const payload = {
+      contents: [{
+        parts: [
+          { text: "Provide a precise verbatim transcript of the audio. Do not add any extra text, commentary, or speaker labels. Just the words spoken." },
+          { inlineData: { data: audioBytes, mimeType } }
+        ]
+      }],
+      generationConfig: {
+        temperature: 0.1 // Low temperature for factual transcription
+      }
     };
 
-    const sttRes = await fetch(STT_URL, {
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(sttBody),
+      body: JSON.stringify(payload),
     });
 
-    const data = await sttRes.json();
+    const data = await res.json();
 
-    if (!sttRes.ok) {
-      console.error("Google STT error:", JSON.stringify(data));
+    if (!res.ok) {
+      console.error("Gemini STT error:", JSON.stringify(data));
       return NextResponse.json(
-        { error: data.error?.message || "Google STT error" },
-        { status: sttRes.status }
+        { error: data.error?.message || "Gemini STT error" },
+        { status: res.status }
       );
     }
 
-    const transcript: string =
-      data.results
-        ?.map((r: { alternatives?: { transcript?: string }[] }) =>
-          r.alternatives?.[0]?.transcript ?? ""
-        )
-        .join(" ")
-        .trim() ?? "";
+    const transcript = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? "";
 
     return NextResponse.json({ transcript });
   } catch (err) {
