@@ -11,6 +11,8 @@ const publicPaths = [
   "/api/profile",
   "/api/compare",
   "/api/email",
+  "/api/tts",
+  "/api/stt",
   "/auth/signin",
 ];
 
