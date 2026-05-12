@@ -92,10 +92,13 @@ export default function SimulationV2() {
     phase: "scripted_probes",
   });
 
-  // Speech
-  const [inputMode, setInputMode] = useState<"voice" | "type">(() =>
-    typeof window !== "undefined" ? (localStorage.getItem("inputMode") as "voice" | "type" | null) ?? "voice" : "voice"
-  );
+  // Speech — start with "voice" on both server and first client render to avoid a
+  // hydration mismatch, then sync from localStorage after mount.
+  const [inputMode, setInputMode] = useState<"voice" | "type">("voice");
+  useEffect(() => {
+    const saved = localStorage.getItem("inputMode") as "voice" | "type" | null;
+    if (saved) setInputMode(saved);
+  }, []);
   const [revealedMsgIds, setRevealedMsgIds] = useState<Set<string>>(new Set());
   const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null);
   const recordingStartRef = useRef<number>(0);

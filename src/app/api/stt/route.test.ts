@@ -7,7 +7,8 @@ beforeEach(() => {
   vi.resetModules();
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
-  vi.stubEnv("GOOGLE_STT_API_KEY", "test-key");
+  vi.stubEnv("GEMINI_API_KEY", "test-key");
+  vi.stubEnv("GEMINI_MODEL", "gemini-1.5-flash");
 });
 
 function makeReqWithAudio(bytes: Uint8Array | null): NextRequest {
@@ -21,21 +22,25 @@ function makeReqWithAudio(bytes: Uint8Array | null): NextRequest {
   });
 }
 
-function googleResponse(body: unknown, status = 200): Response {
+function geminiResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "Content-Type": "application/json" },
   });
 }
 
+function transcriptResult(text: string): unknown {
+  return { candidates: [{ content: { parts: [{ text }] } }] };
+}
+
 describe("POST /api/stt", () => {
-  it("returns 500 when GOOGLE_STT_API_KEY is missing", async () => {
-    vi.stubEnv("GOOGLE_STT_API_KEY", "");
+  it("returns 500 when GEMINI_API_KEY is missing", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "");
     const { POST } = await import("./route");
     const res = await POST(makeReqWithAudio(new Uint8Array([1, 2, 3])));
     expect(res.status).toBe(500);
     const body = await res.json();
-    expect(body.error).toMatch(/GOOGLE_STT_API_KEY/);
+    expect(body.error).toMatch(/GEMINI_API_KEY/);
   });
 
   it("returns 400 when no audio file is uploaded", async () => {
@@ -46,72 +51,53 @@ describe("POST /api/stt", () => {
     expect(body.error).toMatch(/audio file is required/i);
   });
 
-  it("returns the transcript from a single result", async () => {
-    fetchMock.mockResolvedValueOnce(
-      googleResponse({
-        results: [{ alternatives: [{ transcript: "hello world" }] }],
-      })
-    );
+  it("returns the transcript from the Gemini response", async () => {
+    fetchMock.mockResolvedValueOnce(geminiResponse(transcriptResult("hello world")));
     const { POST } = await import("./route");
     const res = await POST(makeReqWithAudio(new Uint8Array([1, 2, 3])));
     expect(res.status).toBe(200);
-    const body = await res.json();
-    expect(body.transcript).toBe("hello world");
+    expect((await res.json()).transcript).toBe("hello world");
   });
 
-  it("joins transcripts from multiple results with a space", async () => {
-    fetchMock.mockResolvedValueOnce(
-      googleResponse({
-        results: [
-          { alternatives: [{ transcript: "first part" }] },
-          { alternatives: [{ transcript: "second part" }] },
-        ],
-      })
-    );
+  it("trims whitespace from the transcript", async () => {
+    fetchMock.mockResolvedValueOnce(geminiResponse(transcriptResult("  spaced out  ")));
     const { POST } = await import("./route");
     const res = await POST(makeReqWithAudio(new Uint8Array([1, 2, 3])));
-    expect((await res.json()).transcript).toBe("first part second part");
+    expect((await res.json()).transcript).toBe("spaced out");
   });
 
-  it("returns an empty transcript when Google returns no results", async () => {
-    fetchMock.mockResolvedValueOnce(googleResponse({}));
+  it("returns an empty transcript when Gemini returns no candidates", async () => {
+    fetchMock.mockResolvedValueOnce(geminiResponse({}));
     const { POST } = await import("./route");
     const res = await POST(makeReqWithAudio(new Uint8Array([1, 2, 3])));
     expect(res.status).toBe(200);
     expect((await res.json()).transcript).toBe("");
   });
 
-  it("propagates Google error message and status", async () => {
+  it("propagates the Gemini error message and status", async () => {
     fetchMock.mockResolvedValueOnce(
-      googleResponse(
-        { error: { message: "Invalid audio encoding" } },
-        400
-      )
+      geminiResponse({ error: { message: "Unsupported audio mime type" } }, 400)
     );
     const { POST } = await import("./route");
     const res = await POST(makeReqWithAudio(new Uint8Array([1, 2, 3])));
     expect(res.status).toBe(400);
-    const body = await res.json();
-    expect(body.error).toBe("Invalid audio encoding");
+    expect((await res.json()).error).toBe("Unsupported audio mime type");
   });
 
-  it("calls Google STT v1 with WEBM_OPUS config and base64 audio", async () => {
-    fetchMock.mockResolvedValueOnce(googleResponse({ results: [] }));
+  it("calls Gemini generateContent with the configured model and inline base64 audio", async () => {
+    fetchMock.mockResolvedValueOnce(geminiResponse(transcriptResult("")));
     const { POST } = await import("./route");
     await POST(makeReqWithAudio(new Uint8Array([1, 2, 3])));
 
     expect(fetchMock).toHaveBeenCalledOnce();
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toContain("speech.googleapis.com/v1/speech:recognize");
+    expect(url).toContain("generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent");
     expect(url).toContain("key=test-key");
     const sentBody = JSON.parse(init.body);
-    expect(sentBody.config).toMatchObject({
-      encoding: "WEBM_OPUS",
-      sampleRateHertz: 48000,
-      languageCode: "en-US",
-      model: "latest_long",
-      enableAutomaticPunctuation: true,
-    });
-    expect(sentBody.audio.content).toBe(Buffer.from([1, 2, 3]).toString("base64"));
+    const parts = sentBody.contents[0].parts;
+    expect(typeof parts[0].text).toBe("string");
+    expect(parts[1].inlineData.mimeType).toBe("audio/webm");
+    expect(parts[1].inlineData.data).toBe(Buffer.from([1, 2, 3]).toString("base64"));
+    expect(sentBody.generationConfig.temperature).toBe(0.1);
   });
 });

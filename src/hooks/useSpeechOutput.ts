@@ -53,17 +53,33 @@ export function useSpeechOutput(defaultVoice: string): UseSpeechOutputReturn {
       if (abortRef.current) break;
       try {
         setCurrentChunk(chunk);
-        const url = await fetchTTSAudio(chunk, voice);
-        if (abortRef.current) { URL.revokeObjectURL(url); break; }
-        objectUrls.current.push(url);
-        audio.src = url;
-        await new Promise<void>((resolve, reject) => {
-          audio.onended  = () => resolve();
-          audio.onerror  = () => reject(new Error("Audio playback error"));
-          audio.play().catch(reject);
-        });
-        URL.revokeObjectURL(url);
-        objectUrls.current = objectUrls.current.filter((u) => u !== url);
+        try {
+          // Primary path: Amazon Polly via /api/tts
+          const url = await fetchTTSAudio(chunk, voice);
+          if (abortRef.current) { URL.revokeObjectURL(url); break; }
+          objectUrls.current.push(url);
+          audio.src = url;
+          await new Promise<void>((resolve, reject) => {
+            audio.onended  = () => resolve();
+            audio.onerror  = () => reject(new Error("Audio playback error"));
+            audio.play().catch(reject);
+          });
+          URL.revokeObjectURL(url);
+          objectUrls.current = objectUrls.current.filter((u) => u !== url);
+        } catch (apiError) {
+          // Fallback: browser Web Speech API (no network, no AWS creds needed)
+          console.warn("TTS API failed, falling back to Web Speech API:", apiError);
+          await new Promise<void>((resolve, reject) => {
+            if (abortRef.current || typeof window === "undefined" || !("speechSynthesis" in window)) {
+              resolve();
+              return;
+            }
+            const utterance = new SpeechSynthesisUtterance(chunk);
+            utterance.onend   = () => resolve();
+            utterance.onerror = () => reject(new Error("Web Speech fallback error"));
+            window.speechSynthesis.speak(utterance);
+          });
+        }
       } catch (e) {
         console.error("TTS playback error:", e);
         break;
