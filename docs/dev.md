@@ -14,9 +14,8 @@ AWS_ACCESS_KEY_ID=         # IAM user key — needs AmazonPollyReadOnlyAccess
 AWS_SECRET_ACCESS_KEY=     # IAM user secret
 AWS_REGION=us-east-1       # region where Polly is available (us-east-1 recommended)
 
-# ── Speech-to-Text (Google Cloud STT v1) ──────────────────────────────────────
-GOOGLE_STT_API_KEY=        # Google Cloud API key with "Cloud Speech-to-Text API" enabled
-                           # Restrict key to: Cloud Speech-to-Text API
+# ── Speech-to-Text ────────────────────────────────────────────────────────────
+# No separate key — STT uses Gemini multimodal transcription via GEMINI_API_KEY above.
 
 # ── Auth (NextAuth v5) ────────────────────────────────────────────────────────
 AUTH_SECRET=               # random string — run: openssl rand -base64 32
@@ -42,10 +41,7 @@ RESEND_API_KEY=            # re_...
 3. Security credentials tab → Create access key → choose "Application running outside AWS"
 4. Copy Access key ID and Secret access key
 
-**Google STT (`GOOGLE_STT_API_KEY`)**
-1. Google Cloud Console → APIs & Services → Credentials → Create credentials → API key
-2. Click the key → API restrictions → Restrict to: `Cloud Speech-to-Text API`
-3. Make sure `Cloud Speech-to-Text API` is enabled in APIs & Services → Enabled APIs
+**Speech-to-Text** — no key needed. STT goes through Gemini's multimodal `generateContent` using the same `GEMINI_API_KEY`.
 
 **Auth secret**
 ```bash
@@ -67,17 +63,22 @@ npm run dev        # starts on http://localhost:3000
 
 ## Changelog
 
+### Speech-to-text: Gemini multimodal (replaces Google Cloud STT v1)
+
+- `src/app/api/stt/route.ts` — now sends the recorded audio inline to Gemini (`generateContent`, model from `GEMINI_MODEL`, default `gemini-1.5-flash`) with a verbatim-transcript prompt at `temperature 0.1`. The `GOOGLE_STT_API_KEY` is gone — STT rides on `GEMINI_API_KEY`.
+- `src/hooks/useSpeechInput.ts` — removed the `AudioContext` 1.5 s silence auto-stop; recording is now stopped manually by tapping the mic again. Added explicit `MediaRecorder` codec selection (`audio/webm;codecs=opus` → `audio/webm` → browser default) and `getUserMedia` audio constraints (`echoCancellation` / `noiseSuppression` / `autoGainControl`) to avoid the macOS Continuity Camera mic. Added user-visible status text via `interimText`.
+
 ### Speech interface (voice-first mode)
 
 Added a full speech layer on top of the existing text chat.
 
 **New API routes**
 - `src/app/api/tts/route.ts` — proxies text → Amazon Polly → returns `audio/mpeg`. Accepts `{ text, voiceId }`. Whitelists valid Polly voice IDs; falls back to `"Joanna"`.
-- `src/app/api/stt/route.ts` — proxies audio blob → Google Cloud STT v1 (`latest_long` model) → returns `{ transcript }`. Uses `multipart/form-data`.
+- `src/app/api/stt/route.ts` — proxies audio blob → Gemini multimodal transcription (model from `GEMINI_MODEL`, default `gemini-1.5-flash`; verbatim-transcript prompt, `temperature 0.1`) → returns `{ transcript }`. Uses `multipart/form-data`. *(Originally Google Cloud STT v1 — see the entry above.)*
 
 **New hooks**
 - `src/hooks/useSpeechOutput.ts` — sentence-chunks the AI reply, fetches Polly audio per chunk, plays sequentially. `speak(text, voiceId?)` accepts an optional per-call voice override to avoid React state timing issues when the stage changes.
-- `src/hooks/useSpeechInput.ts` — `MediaRecorder` + `AudioContext` silence detection (1.5 s). Two states: `idle` / `listening`. Processing is silent (no indicator shown to user). Fires `onTranscript(text)` callback.
+- `src/hooks/useSpeechInput.ts` — `MediaRecorder` capture (prefers `audio/webm;codecs=opus`, falls back per browser) with `getUserMedia` echo-cancel / noise-suppress / AGC constraints. Two states: `idle` / `listening`; stop is manual (tap the mic again). `interimText` surfaces status — "Listening…", "Transcribing…", "Could not hear anything.", "Microphone access denied", "Error: could not transcribe". Fires `onTranscript(text)` callback. *(Earlier revisions used `AudioContext` 1.5 s silence auto-stop — removed; see the entry above.)*
 
 **New components**
 - `src/components/MicButton.tsx` — icon-only mic button; `idle` shows mic SVG, `listening` shows stop square with dual pulse rings.
@@ -114,11 +115,10 @@ Added a full speech layer on top of the existing text chat.
 
 ### Voice flow
 ```
-User speaks
-  → MediaRecorder captures WebM/Opus
-  → silence detected (1.5 s)
-  → POST /api/stt  (audio blob)
-  → Google STT v1  → transcript string
+User taps mic → MediaRecorder captures WebM/Opus
+  → user taps mic again to stop
+  → POST /api/stt  (audio blob, multipart/form-data)
+  → Gemini (multimodal transcription)  → transcript string
   → sendMessage(transcript)
   → LLM reply arrives
   → POST /api/tts per sentence  (text + voiceId)
